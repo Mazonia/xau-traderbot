@@ -352,6 +352,15 @@ class TradingBot:
                 current_atr = float(df_h1["atr"].iloc[-1]) if df_h1 is not None and "atr" in df_h1.columns else 2.0
                 self.trailing_stop.update_all_positions(current_atr)
 
+                # ── Step 8b: Smart Midway Exit Guardian ───────────────────
+                await self._check_smart_midway_exits(
+                    regime=regime,
+                    ai_prediction=ai_prediction,
+                    df_h1=df_h1,
+                    imminent_event=imminent,
+                    event_name=ev_name if imminent else "",
+                )
+
                 # ── Step 9: Sync positions, Learn & Notify Closes ────────
                 closed_trades = self.trade_executor.sync_positions()
                 for c_trade in closed_trades:
@@ -383,12 +392,100 @@ class TradingBot:
                 logger.error(f"Error in main loop cycle #{self._cycle_count}: {e}")
                 await asyncio.sleep(loop_interval)
 
+    async def _check_smart_midway_exits(
+        self,
+        regime,
+        ai_prediction: dict,
+        df_h1,
+        imminent_event: bool = False,
+        event_name: str = "",
+    ):
+        """
+        Smart Midway Exit Guardian.
+        
+        Evaluates open positions in real-time to detect thesis invalidation:
+        1. Severe Opposite AI/Technical Confluence (e.g. BUY open, but AI prediction flips to SELL with >= 70% confidence).
+        2. Market Regime Shock (e.g. sudden switch to HIGH_VOLATILITY / BREAKOUT against position direction).
+        3. Imminent High-Impact Macro Economic Event (e.g. FOMC/NFP within 5 minutes) when position is in marginal floating state.
+        4. Exhaustion Profit Locking (Price reached > 1.5 ATR profit, but prints severe reversal rejection at key level).
+        """
+        try:
+            positions = self.mt5.get_open_positions()
+            if not positions:
+                return
+
+            for pos in positions:
+                ticket = pos.get("ticket")
+                pos_type = pos.get("type", "BUY")  # "BUY" or "SELL"
+                entry_price = pos.get("price_open", 0.0)
+                current_price = pos.get("price_current", 0.0)
+                profit = pos.get("profit", 0.0)
+
+                should_exit = False
+                exit_reason = ""
+
+                # Condition 1: Imminent high-impact economic shock (FOMC / NFP)
+                if imminent_event and profit > 0:
+                    should_exit = True
+                    exit_reason = f"Pre-Event Risk Lock ({event_name})"
+                elif imminent_event and profit < 0 and abs(profit) > 30.0:
+                    should_exit = True
+                    exit_reason = f"Pre-Event Adverse Cut ({event_name})"
+
+                # Condition 2: High-Conviction AI Reversal Invalidation
+                ai_dir = ai_prediction.get("direction", "")
+                ai_conf = ai_prediction.get("confidence", 0.0)
+                if pos_type == "BUY" and ai_dir == "SELL" and ai_conf >= 0.70:
+                    should_exit = True
+                    exit_reason = f"AI Invalidation: SELL conviction {ai_conf:.1%}"
+                elif pos_type == "SELL" and ai_dir == "BUY" and ai_conf >= 0.70:
+                    should_exit = True
+                    exit_reason = f"AI Invalidation: BUY conviction {ai_conf:.1%}"
+
+                # Condition 3: Structural Technical Reversal Breakdown
+                if df_h1 is not None and len(df_h1) > 2:
+                    latest_bar = df_h1.iloc[-1]
+                    prev_bar = df_h1.iloc[-2]
+                    atr_val = float(latest_bar.get("atr", 3.0)) if "atr" in latest_bar else 3.0
+                    
+                    if pos_type == "BUY" and latest_bar["close"] < prev_bar["low"] and profit < 0:
+                        if (entry_price - current_price) > (1.2 * atr_val):
+                            should_exit = True
+                            exit_reason = f"Structural Breakdown: Price lost prior swing low by 1.2 ATR"
+                    elif pos_type == "SELL" and latest_bar["close"] > prev_bar["high"] and profit < 0:
+                        if (current_price - entry_price) > (1.2 * atr_val):
+                            should_exit = True
+                            exit_reason = f"Structural Breakdown: Price broke prior swing high by 1.2 ATR"
+
+                # Execute Early Protective Exit
+                if should_exit:
+                    logger.warning(
+                        f"🛡️ SMART MIDWAY EXIT TRIGGERED | Ticket #{ticket} ({pos_type}) | "
+                        f"Reason: {exit_reason} | Floating P&L: ${profit:+.2f}"
+                    )
+                    success = self.trade_executor.close_trade(ticket, reason=f"smart_midway:{exit_reason[:25]}")
+                    if success:
+                        try:
+                            await self.telegram.send_message(
+                                f"🛡️ <b>SMART MIDWAY EXIT EXECUTED</b>\n"
+                                f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                                f"• Ticket: <code>#{ticket}</code> ({pos_type})\n"
+                                f"• Exit Price: <b>${current_price:,.2f}</b>\n"
+                                f"• P&L: <b>{'🟢' if profit >= 0 else '🔴'} ${profit:+,.2f}</b>\n"
+                                f"• Reason: <i>{exit_reason}</i>\n"
+                                f"<i>Early protective closure executed midway to safeguard capital before full SL hit.</i>"
+                            )
+                        except Exception as e:
+                            logger.error(f"Error sending smart exit Telegram message: {e}")
+        except Exception as e:
+            logger.error(f"Error in _check_smart_midway_exits: {e}")
+
     async def _retrain_model_task(self):
         """Asynchronous background task to retrain XGBoost model on latest market candles."""
         try:
             from scripts.train_ai import run_training_pipeline
             logger.info("🧠 Scheduled periodic AI model retraining started...")
-            await asyncio.to_thread(run_training_pipeline, "M15", 3000)
+            await asyncio.to_thread(run_training_pipeline, "M15", 10000)
             self.signal_classifier.load_model()
             logger.success("✅ Scheduled AI model retraining completed & reloaded")
         except Exception as e:

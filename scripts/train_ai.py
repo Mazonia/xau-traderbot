@@ -1,7 +1,8 @@
 """
 Institutional AI Model Training Pipeline for XAUUSD
-Trains the XGBoost Signal Classifier using historical MT5 market data,
-multi-timeframe engineered technical features, and TimeSeriesSplit cross-validation.
+Trains the XGBoost Signal Classifier using 10,000+ historical MT5 market data candles,
+multi-timeframe engineered Smart Money Concepts (FVG, sweeps, EMA stack, ATR expansion),
+and TimeSeriesSplit chronological cross-validation.
 """
 
 import os
@@ -30,7 +31,7 @@ from analysis.technical import TechnicalAnalyzer
 from config.settings import get_settings, MODELS_DIR
 
 
-def fetch_training_data(timeframe: str = "M15", count: int = 3000) -> pd.DataFrame:
+def fetch_training_data(timeframe: str = "M15", count: int = 10000) -> pd.DataFrame:
     """Fetch high-quality historical candle data directly from MT5."""
     logger.info(f"Connecting to MT5 to fetch {count} candles on {timeframe}...")
     connector = MT5Connector()
@@ -49,14 +50,14 @@ def fetch_training_data(timeframe: str = "M15", count: int = 3000) -> pd.DataFra
 
 def engineer_and_label(df: pd.DataFrame, horizon: int = 5, threshold_pct: float = 0.0018) -> tuple[np.ndarray, np.ndarray, list[str], pd.DataFrame]:
     """
-    Generate 48+ institutional quantitative features and future return target labels.
+    Generate 50+ institutional quantitative features and future return target labels.
     
     Target:
       0: BUY  (Forward return > +threshold_pct)
       1: HOLD (Forward return within [-threshold_pct, +threshold_pct])
       2: SELL (Forward return < -threshold_pct)
     """
-    logger.info("Computing multi-indicator technical feature matrix...")
+    logger.info("Computing multi-indicator technical feature matrix with Smart Money Concepts...")
     ta = TechnicalAnalyzer()
     feature_df = ta.create_ml_features(df)
 
@@ -102,21 +103,21 @@ def train_model(X: np.ndarray, y: np.ndarray, feature_cols: list[str]) -> tuple[
     sample_weight = np.array([weights[yi] for yi in y_train])
 
     classifier = xgb.XGBClassifier(
-        n_estimators=180,
-        max_depth=4,
-        learning_rate=0.04,
+        n_estimators=250,
+        max_depth=5,
+        learning_rate=0.035,
         subsample=0.85,
         colsample_bytree=0.85,
-        gamma=0.2,
-        reg_alpha=0.1,
-        reg_lambda=1.0,
+        gamma=0.3,
+        reg_alpha=0.2,
+        reg_lambda=1.5,
         eval_metric="mlogloss",
         random_state=42,
         verbosity=0,
         n_jobs=1,
     )
 
-    logger.info("Fitting XGBoost Classifier with regularization...")
+    logger.info("Fitting XGBoost Classifier with institutional regularization...")
     classifier.fit(
         X_train,
         y_train,
@@ -160,11 +161,11 @@ def save_artifacts(model: xgb.XGBClassifier, feature_cols: list[str]) -> Path:
     return model_path
 
 
-def run_training_pipeline(timeframe: str = "M15", count: int = 3000) -> dict:
-    """Execute complete end-to-end model training."""
+def run_training_pipeline(timeframe: str = "M15", count: int = 10000) -> dict:
+    """Execute complete end-to-end model training on expanded datasets."""
     start_time = time.time()
     print("=" * 60)
-    print("  🚀 XAUUSD AI TRADING BOT — MODEL TRAINING PIPELINE")
+    print("  🚀 XAUUSD AI TRADING BOT — 10,000-CANDLE TRAINING PIPELINE")
     print("=" * 60)
 
     # 1. Fetch data
@@ -188,7 +189,7 @@ def run_training_pipeline(timeframe: str = "M15", count: int = 3000) -> dict:
 
     class_names = {0: "BUY", 1: "HOLD", 2: "SELL"}
     print("\n" + "─" * 60)
-    print("  📊 MODEL TRAINING REPORT")
+    print("  📊 PRODUCTION MODEL REPORT (10,000 CANDLES + SMC)")
     print("─" * 60)
     print(f"  • Timeframe:           {timeframe}")
     print(f"  • Total Candles:       {len(df)}")
@@ -210,7 +211,7 @@ def run_training_pipeline(timeframe: str = "M15", count: int = 3000) -> dict:
 
 
 if __name__ == "__main__":
-    count = 3000
+    count = 10000
     tf = "M15"
     if len(sys.argv) > 1 and sys.argv[1].isdigit():
         count = int(sys.argv[1])

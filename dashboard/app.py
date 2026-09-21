@@ -408,6 +408,88 @@ async def refresh_news_feed():
         return JSONResponse({"success": False, "error": str(e)}, status_code=500)
 
 
+@app.get("/api/barometer")
+async def get_market_barometer():
+    """Get live institutional technical barometer metrics (24h high/low, spread, ATR, RSI)."""
+    try:
+        from core.mt5_connector import MT5Connector
+        from analysis.technical import TechnicalAnalyzer
+
+        mt5 = MT5Connector()
+        if mt5.connect(max_retries=1, retry_delay=0.1):
+            tick = mt5.get_current_tick()
+            df_d1 = mt5.get_rates(timeframe="D1", count=2)
+            df_h1 = mt5.get_rates(timeframe="H1", count=30)
+            mt5.disconnect()
+
+            high_24h = float(df_d1["high"].iloc[-1]) if df_d1 is not None and not df_d1.empty else 0.0
+            low_24h = float(df_d1["low"].iloc[-1]) if df_d1 is not None and not df_d1.empty else 0.0
+
+            atr_val = 2.5
+            rsi_val = 50.0
+            if df_h1 is not None and len(df_h1) >= 15:
+                ta = TechnicalAnalyzer()
+                df_ta = ta.add_atr(df_h1.copy(), period=14)
+                df_ta = ta.add_rsi(df_ta, period=14)
+                if "atr" in df_ta.columns and not df_ta["atr"].isna().iloc[-1]:
+                    atr_val = round(float(df_ta["atr"].iloc[-1]), 2)
+                if "rsi" in df_ta.columns and not df_ta["rsi"].isna().iloc[-1]:
+                    rsi_val = round(float(df_ta["rsi"].iloc[-1]), 1)
+
+            current_price = tick.get("bid", 0.0) if tick else 0.0
+            spread_pts = tick.get("spread", 0.0) if tick else 0.0
+
+            # Calculate 24h range percent
+            range_span = high_24h - low_24h
+            pct_in_range = 50.0
+            if range_span > 0:
+                pct_in_range = max(0.0, min(100.0, ((current_price - low_24h) / range_span) * 100.0))
+
+            return JSONResponse({
+                "success": True,
+                "current_price": current_price,
+                "ask": tick.get("ask", current_price) if tick else current_price,
+                "spread": spread_pts,
+                "high_24h": high_24h,
+                "low_24h": low_24h,
+                "pct_in_range": round(pct_in_range, 1),
+                "atr": atr_val,
+                "rsi": rsi_val,
+            })
+        return JSONResponse({"success": False, "error": "MT5 offline"}, status_code=500)
+    except Exception as e:
+        logger.error(f"Barometer error: {e}")
+        return JSONResponse({"success": False, "error": str(e)}, status_code=500)
+
+
+@app.on_event("startup")
+async def start_realtime_streamer():
+    """Background task to broadcast real-time price updates to WebSocket subscribers."""
+    import asyncio
+    async def stream_loop():
+        from core.mt5_connector import MT5Connector
+        logger.info("📡 Starting real-time WebSocket market streamer")
+        mt5 = MT5Connector()
+        while True:
+            try:
+                if connected_clients:
+                    if mt5.connect(max_retries=1, retry_delay=0.1):
+                        tick = mt5.get_current_tick()
+                        if tick and "bid" in tick:
+                            await broadcast({
+                                "type": "price_update",
+                                "price": tick.get("bid", 0.0),
+                                "ask": tick.get("ask", 0.0),
+                                "spread": tick.get("spread", 0.0),
+                                "timestamp": int(datetime.now(timezone.utc).timestamp()),
+                            })
+            except Exception as e:
+                logger.debug(f"Streamer tick exception: {e}")
+            await asyncio.sleep(2.0)
+
+    asyncio.create_task(stream_loop())
+
+
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     """WebSocket endpoint for real-time data streaming."""

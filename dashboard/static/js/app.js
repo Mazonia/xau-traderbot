@@ -25,9 +25,19 @@ document.addEventListener('DOMContentLoaded', () => {
     loadChartData(currentTimeframe);
     connectWebSocket();
     refreshAll();
+    pollBarometer();
 
     // Regular data polling fallback
     setInterval(refreshAll, POLL_INTERVAL);
+
+    // Auto-update live candle every 3 seconds (No manual page refresh needed!)
+    setInterval(pollLiveCandle, 3000);
+
+    // Auto-poll barometer (24H range, spread, ATR, RSI) every 4 seconds
+    setInterval(pollBarometer, 4000);
+
+    // Start live candle close countdown timer
+    startCountdownTimer();
 
     // Timeframe selector listeners
     document.querySelectorAll('.tf-btn').forEach(btn => {
@@ -127,6 +137,81 @@ async function loadChartData(tf) {
             updatePriceDisplay(last.close);
         }
     }
+}
+
+// ── Live Candlestick Real-Time Auto-Updating Engine ─────────────────────
+async function pollLiveCandle() {
+    if (!candleSeries) return;
+    try {
+        const data = await fetchJSON(`/api/chart?timeframe=${currentTimeframe}&count=3`);
+        if (data && Array.isArray(data) && data.length > 0) {
+            const latest = data[data.length - 1];
+            if (latest) {
+                candleSeries.update(latest);
+                setText('legend-o', `$${latest.open.toFixed(2)}`);
+                setText('legend-h', `$${latest.high.toFixed(2)}`);
+                setText('legend-l', `$${latest.low.toFixed(2)}`);
+                setText('legend-c', `$${latest.close.toFixed(2)}`);
+                updatePriceDisplay(latest.close);
+            }
+        }
+    } catch (e) {
+        console.debug('Live candle poll error:', e);
+    }
+}
+
+// ── Technical Barometer Real-Time Engine ────────────────────────────────
+async function pollBarometer() {
+    try {
+        const b = await fetchJSON('/api/barometer');
+        if (b && b.success) {
+            setText('dock-low', `$${b.low_24h.toFixed(2)}`);
+            setText('dock-high', `$${b.high_24h.toFixed(2)}`);
+            setText('dock-spread', `${(b.spread / 10).toFixed(1)} pips`);
+            setText('dock-atr', `$${b.atr.toFixed(2)}`);
+
+            const rsiEl = document.getElementById('dock-rsi');
+            if (rsiEl) {
+                const rsiZone = b.rsi >= 70 ? 'OVERBOUGHT' : b.rsi <= 30 ? 'OVERSOLD' : 'NEUTRAL';
+                const zoneClass = b.rsi >= 70 ? 'loss' : b.rsi <= 30 ? 'profit' : '';
+                rsiEl.innerHTML = `${b.rsi.toFixed(1)} <span class="badge-tag ${zoneClass}">${rsiZone}</span>`;
+            }
+
+            const pin = document.getElementById('dock-range-pin');
+            const fill = document.getElementById('dock-range-fill');
+            if (pin) pin.style.left = `${b.pct_in_range}%`;
+            if (fill) fill.style.width = `${b.pct_in_range}%`;
+        }
+    } catch (e) {
+        console.debug('Barometer poll error:', e);
+    }
+}
+
+// ── Live Candle Close Countdown Timer ───────────────────────────────────
+function startCountdownTimer() {
+    setInterval(() => {
+        const nowSec = Math.floor(Date.now() / 1000);
+        const tfSeconds = {
+            'M5': 300,
+            'M15': 900,
+            'H1': 3600,
+            'H4': 14400,
+            'D1': 86400
+        };
+        const totalSec = tfSeconds[currentTimeframe] || 3600;
+        const remaining = totalSec - (nowSec % totalSec);
+
+        const mins = Math.floor(remaining / 60);
+        const secs = remaining % 60;
+        const formatted = `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+
+        setText('dock-countdown', formatted);
+
+        // When countdown expires, trigger a full live candle sync
+        if (remaining === totalSec - 1) {
+            pollLiveCandle();
+        }
+    }, 1000);
 }
 
 // ── WebSocket Real-time Engine ──────────────────────────────────────────

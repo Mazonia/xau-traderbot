@@ -532,4 +532,34 @@ class TechnicalAnalyzer:
             bb_range = df["bb_upper"] - df["bb_lower"]
             df["bb_position"] = (df["close"] - df["bb_lower"]) / bb_range.replace(0, np.nan)
 
+        # Smart Money Concepts (SMC) & Institutional Market Structure Features
+        # 1. Fair Value Gaps (FVG)
+        bullish_fvg = (df["low"] > df["high"].shift(2)).astype(float)
+        bearish_fvg = (df["high"] < df["low"].shift(2)).astype(float)
+        df["fvg_bullish"] = bullish_fvg
+        df["fvg_bearish"] = bearish_fvg
+        df["fvg_gap_size"] = np.where(
+            bullish_fvg == 1,
+            (df["low"] - df["high"].shift(2)) / df["close"],
+            np.where(bearish_fvg == 1, (df["low"].shift(2) - df["high"]) / df["close"], 0.0)
+        )
+
+        # 2. Swing Liquidity Sweeps (20-period swing high/low rejection wicks)
+        recent_swing_high = df["high"].shift(1).rolling(20).max()
+        recent_swing_low = df["low"].shift(1).rolling(20).min()
+        df["sweep_high"] = ((df["high"] > recent_swing_high) & (df["close"] < recent_swing_high)).astype(float)
+        df["sweep_low"] = ((df["low"] < recent_swing_low) & (df["close"] > recent_swing_low)).astype(float)
+
+        # 3. Triple EMA Stack Alignment (Bullish: EMA20 > EMA50 > EMA200; Bearish: EMA20 < EMA50 < EMA200)
+        if "ema_20" in df.columns and "ema_50" in df.columns and "ema_200" in df.columns:
+            df["ema_stack_bullish"] = ((df["ema_20"] > df["ema_50"]) & (df["ema_50"] > df["ema_200"])).astype(float)
+            df["ema_stack_bearish"] = ((df["ema_20"] < df["ema_50"]) & (df["ema_50"] < df["ema_200"])).astype(float)
+
+        # 4. ATR Volatility Expansion Ratio
+        if "atr" in df.columns:
+            candle_range = df["high"] - df["low"]
+            df["atr_expansion"] = candle_range / df["atr"].replace(0, np.nan)
+        else:
+            df["atr_expansion"] = 1.0
+
         return df

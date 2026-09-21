@@ -137,11 +137,11 @@
             <!-- ── Top Stage: Chart + Intelligence Panel ───────────── -->
             <section class="stage-grid">
                 
-                <!-- Chart Station (Left 66%) -->
+                <!-- ── Chart Workstation (Left Column) ─────────────────── -->
                 <div class="glass-card chart-station">
                     <div class="card-header">
                         <div class="header-left">
-                            <span class="section-badge">INTERACTIVE OHLCV</span>
+                            <span class="section-badge amber">XAUUSD REAL-TIME</span>
                             <h2 class="card-title">Gold Spot / U.S. Dollar</h2>
                             <div class="chart-legend" id="chart-legend">
                                 <span class="legend-item"><span class="legend-k">O:</span> <span class="legend-v" id="legend-o">—</span></span>
@@ -150,88 +150,106 @@
                                 <span class="legend-item"><span class="legend-k">C:</span> <span class="legend-v" id="legend-c">—</span></span>
                             </div>
                         </div>
-                        <div class="timeframe-selector">
-                            <button class="tf-btn" data-tf="M5">M5</button>
-                            <button class="tf-btn" data-tf="M15">M15</button>
-                            <button class="tf-btn active" data-tf="H1">H1</button>
-                            <button class="tf-btn" data-tf="H4">H4</button>
-                            <button class="tf-btn" data-tf="D1">D1</button>
+                        <div class="header-right">
+                            <div class="live-stream-badge" title="Live Auto-Sync Feed">
+                                <span class="stream-dot"></span>
+                                <span class="stream-text">STREAM LIVE</span>
+                            </div>
+                            <div class="timeframe-selector">
+                                <button class="tf-btn" data-tf="M5">M5</button>
+                                <button class="tf-btn" data-tf="M15">M15</button>
+                                <button class="tf-btn active" data-tf="H1">H1</button>
+                                <button class="tf-btn" data-tf="H4">H4</button>
+                                <button class="tf-btn" data-tf="D1">D1</button>
+                            </div>
                         </div>
                     </div>
+                    
+                    <!-- Dynamic Full-Height Chart Canvas -->
                     <div class="chart-viewport" id="chart-viewport"></div>
+
+                    <!-- Institutional Technical Barometer Dock (Eliminates All Blank Space) -->
+                    <div class="chart-footer-dock" id="chart-footer-dock">
+                        <div class="dock-range-item">
+                            <div class="dock-range-labels">
+                                <span class="dock-label">24H RANGE</span>
+                                <span class="dock-val-sm"><span id="dock-low">$4,339.92</span> <span class="range-arrow">⇄</span> <span id="dock-high">$4,383.22</span></span>
+                            </div>
+                            <div class="range-track">
+                                <div class="range-fill" id="dock-range-fill" style="width: 35%;"></div>
+                                <div class="range-pin" id="dock-range-pin" style="left: 35%;" title="Current Price"></div>
+                            </div>
+                        </div>
+
+                        <div class="dock-metric-item">
+                            <span class="dock-label">LIVE SPREAD</span>
+                            <span class="dock-val" id="dock-spread">3.7 pips</span>
+                        </div>
+
+                        <div class="dock-metric-item">
+                            <span class="dock-label">ATR (14)</span>
+                            <span class="dock-val" id="dock-atr">$3.12</span>
+                        </div>
+
+                        <div class="dock-metric-item">
+                            <span class="dock-label">RSI (14)</span>
+                            <span class="dock-val" id="dock-rsi">48.2 <span class="badge-tag">NEUTRAL</span></span>
+                        </div>
+
+                        <div class="dock-metric-item highlight">
+                            <span class="dock-label">NEXT CANDLE</span>
+                            <span class="dock-val mono" id="dock-countdown">04:18</span>
+                        </div>
+
+                        <div class="dock-status-item">
+                            <span class="live-pulse-dot"></span>
+                            <span class="dock-status-text" id="dock-stream-status">AUTO-SYNC (3s)</span>
+                        </div>
+                    </div>
                 </div>
 
-                <!-- AI Intelligence & Quick Order (Right 34%) -->
+                <!-- ── AI Intelligence & Quick Order (Right Column) ─────── -->
                 <div class="stage-sidebar">
                     
-                    <!-- Market Regime & AI Insights Card -->
-                    <div class="glass-card regime-card">
+                    <!-- Unified Neural Quant & Adaptive Intelligence Hub -->
+                    <div class="glass-card intelligence-hub-card">
                         <div class="card-header borderless">
                             <div class="header-left">
                                 <span class="section-badge purple">NEURAL QUANT</span>
-                                <h3 class="card-title-sm">Market Regime & AI</h3>
+                                <span class="section-badge cyan">SELF-LEARNING</span>
+                                <h3 class="card-title-sm">Market Radar & AI</h3>
                             </div>
-                            <span class="regime-status-badge" id="regime-tag">RANGING</span>
-                        </div>
-                        <div class="card-body">
-                            <!-- ADX Bar -->
-                            <div class="metric-meter-group">
-                                <div class="meter-header">
-                                    <span class="meter-label">Trend Strength (ADX)</span>
-                                    <span class="meter-val" id="regime-adx">14.9</span>
-                                </div>
-                                <div class="meter-track">
-                                    <div class="meter-fill" id="adx-bar" style="width: 30%;"></div>
-                                </div>
-                            </div>
-
-                            <!-- Volatility Bar -->
-                            <div class="metric-meter-group">
-                                <div class="meter-header">
-                                    <span class="meter-label">Volatility Index</span>
-                                    <span class="meter-val" id="regime-vol">LOW (7.0%)</span>
-                                </div>
-                                <div class="meter-track">
-                                    <div class="meter-fill vol" id="vol-bar" style="width: 15%;"></div>
-                                </div>
-                            </div>
-
-                            <!-- Sizing Modifier -->
-                            <div class="regime-stats-row">
-                                <div class="regime-stat">
-                                    <span class="rg-k">Size Multiplier</span>
-                                    <span class="rg-v" id="regime-sizer">0.70x</span>
-                                </div>
-                                <div class="regime-stat">
-                                    <span class="rg-k">Engine Gate</span>
-                                    <span class="rg-v active" id="regime-gate">ACTIVE</span>
-                                </div>
-                            </div>
-
-                            <!-- Active Strategies Chips -->
-                            <div class="strategies-group">
-                                <span class="strategies-title">Active Strategies:</span>
-                                <div class="chip-container" id="strategy-chips">
-                                    <span class="chip">SCALPING</span>
-                                    <span class="chip">MEAN REVERSION</span>
-                                </div>
+                            <div class="header-badges">
+                                <span class="regime-status-badge" id="regime-tag">RANGING</span>
+                                <span class="learning-status-badge" id="learning-badge">EVOLVING</span>
                             </div>
                         </div>
-                    </div>
-
-                                        <!-- Autonomous Self-Learning & Adaptation Card -->
-                    <div class="glass-card learning-card">
-                        <div class="card-header borderless">
-                            <div class="header-left">
-                                <span class="section-badge cyan">SELF-LEARNING AI</span>
-                                <h3 class="card-title-sm">Adaptive Trade Intelligence</h3>
+                        <div class="card-body compact">
+                            <!-- Trend Strength (ADX) & Volatility in 2-Column Grid -->
+                            <div class="radar-meter-grid">
+                                <div class="metric-meter-group">
+                                    <div class="meter-header">
+                                        <span class="meter-label">Trend Strength (ADX)</span>
+                                        <span class="meter-val" id="regime-adx">14.9</span>
+                                    </div>
+                                    <div class="meter-track">
+                                        <div class="meter-fill" id="adx-bar" style="width: 30%;"></div>
+                                    </div>
+                                </div>
+                                <div class="metric-meter-group">
+                                    <div class="meter-header">
+                                        <span class="meter-label">Volatility Index</span>
+                                        <span class="meter-val" id="regime-vol">LOW (7.0%)</span>
+                                    </div>
+                                    <div class="meter-track">
+                                        <div class="meter-fill vol" id="vol-bar" style="width: 15%;"></div>
+                                    </div>
+                                </div>
                             </div>
-                            <span class="learning-status-badge" id="learning-badge">EVOLVING</span>
-                        </div>
-                        <div class="card-body">
+
                             <!-- Strategy Multipliers -->
                             <div class="strategies-group">
-                                <span class="strategies-title">Adaptive Strategy Confidence:</span>
+                                <span class="strategies-title">Adaptive Strategy Multipliers:</span>
                                 <div class="multiplier-chips" id="multiplier-chips">
                                     <span class="mult-chip profit" id="mult-scalp">SCALP: 1.05x</span>
                                     <span class="mult-chip loss" id="mult-day">DAY: 0.88x</span>
@@ -256,7 +274,7 @@
                             <!-- Mistake Memory Guard Status -->
                             <div class="mistake-guard-box">
                                 <div class="guard-header">
-                                    <span class="guard-title">🛡️ Mistake Memory Guard:</span>
+                                    <span class="guard-title">🛡️ Autonomous Mistake Guard:</span>
                                     <span class="guard-count" id="guard-count">1 Active Trap Guarded</span>
                                 </div>
                                 <div class="guard-rule" id="guard-latest-rule">Latest: In BULLISH_TREND, avoid counter-trend SELL without 85+ confluence.</div>
@@ -269,14 +287,14 @@
                         <div class="card-header borderless">
                             <div class="header-left">
                                 <span class="section-badge amber">MT5 DIRECT</span>
-                                <h3 class="card-title-sm">Execution & Scheduling</h3>
+                                <h3 class="card-title-sm">Execution Terminal</h3>
                             </div>
                             <div class="order-mode-toggle">
                                 <button class="mode-pill active" id="mode-market-btn" onclick="setOrderMode('market')">⚡ Market</button>
                                 <button class="mode-pill" id="mode-pending-btn" onclick="setOrderMode('pending')">📌 Limit Order</button>
                             </div>
                         </div>
-                        <div class="card-body">
+                        <div class="card-body compact">
                             <div class="order-inputs">
                                 <div class="input-field" id="target-price-group" style="display: none;">
                                     <label for="order-target-price">Target Trigger Price ($)</label>
