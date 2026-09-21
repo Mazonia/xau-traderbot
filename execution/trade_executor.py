@@ -230,6 +230,19 @@ class TradeExecutor:
             logger.info(
                 f"Trade {ticket} closed | P&L: ${position['profit']:+.2f} | Reason: {reason}"
             )
+            try:
+                from ai.trade_learner import trade_learner
+                trade_learner.on_trade_closed({
+                    "ticket": ticket,
+                    "strategy": position.get("comment", "scalping").replace("close_", ""),
+                    "direction": position.get("type", "BUY"),
+                    "profit": position["profit"],
+                    "regime": "RANGING",
+                    "confluence_score": 75.0,
+                    "sentiment_score": 0.0,
+                })
+            except Exception as e:
+                logger.warning(f"TradeLearner hook warning for #{ticket}: {e}")
 
         return success
 

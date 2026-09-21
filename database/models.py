@@ -137,6 +137,46 @@ class EconomicEvent(Base):
         return f"<EconomicEvent '{self.name}' impact={self.impact} @ {self.event_time}>"
 
 
+
+class TradeLesson(Base):
+    """Record of lessons and mistake analysis derived from closed trades."""
+
+    __tablename__ = "trade_lessons"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    ticket = Column(Integer, index=True, nullable=False)
+    symbol = Column(String(20), default="XAUUSD")
+    order_type = Column(String(10), nullable=False)
+    strategy = Column(String(30), nullable=False)
+    profit = Column(Float, nullable=False)
+    outcome = Column(String(10), nullable=False)  # WIN, LOSS, SCRATCH
+    mistake_category = Column(String(40), default="NONE")
+    lesson_summary = Column(Text, nullable=False)
+    defensive_rule = Column(Text, nullable=False)
+    mistake_signature = Column(Text, default="{}")  # JSON string of market conditions at entry
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+    def __repr__(self):
+        return f"<TradeLesson ticket={self.ticket} outcome={self.outcome} category={self.mistake_category}>"
+
+
+class AdaptiveWeight(Base):
+    """Record of self-learning adaptive weights for strategies and confluence components."""
+
+    __tablename__ = "adaptive_weights"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    component = Column(String(40), unique=True, nullable=False, index=True)
+    weight = Column(Float, nullable=False)
+    multiplier = Column(Float, default=1.0)
+    win_count = Column(Integer, default=0)
+    loss_count = Column(Integer, default=0)
+    total_pnl = Column(Float, default=0.0)
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+    def __repr__(self):
+        return f"<AdaptiveWeight {self.component}={self.weight:.2f} (x{self.multiplier:.2f})>"
+
 class PerformanceSnapshot(Base):
     """Periodic snapshots of bot performance metrics."""
 

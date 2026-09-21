@@ -51,3 +51,5 @@ logs/
 .coverage
 htmlcov/
 .pytest_cache/
+data/*.db-shm
+data/*.db-wal

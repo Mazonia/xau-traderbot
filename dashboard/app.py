@@ -128,6 +128,18 @@ async def get_equity_curve():
     return JSONResponse(data)
 
 
+
+@app.get("/api/learning")
+async def get_self_learning_metrics():
+    """Get autonomous self-learning metrics, adaptive weights, and lessons."""
+    try:
+        from ai.trade_learner import trade_learner
+        metrics = trade_learner.get_learning_metrics()
+        return JSONResponse(metrics)
+    except Exception as e:
+        logger.error(f"Error fetching learning metrics: {e}")
+        return JSONResponse({"error": str(e)}, status_code=500)
+
 @app.get("/api/news")
 async def get_recent_news():
     """Get recent news with sentiment."""

@@ -27,7 +27,7 @@ An institutional-grade, fully autonomous algorithmic trading robot designed for 
 - **XGBoost Classifier:** Trained on multi-timeframe engineered indicators (RSI, MACD, Bollinger position, ATR ratios, momentum, and returns lags).
 - **Directional Probability:** Generates real-time probabilistic output for `BUY`, `SELL`, and `HOLD` with confidence scoring.
 
-### 4. Interactive 2-Way Telegram Command Center
+### 5. Interactive 2-Way Telegram Command Center
 - **Zero-Latency Real-Time Polling:** Runs on continuous long-polling (`poll_interval=0.0s`) for instantaneous response times (< 100ms).
 - **Native Telegram Menu:** Registered server-side via `setMyCommands` (accessible via the `[Menu]` button in Telegram).
 - **Interactive Inline Buttons:**
@@ -37,17 +37,18 @@ An institutional-grade, fully autonomous algorithmic trading robot designed for 
   - 📜 **Recent Trades:** Full trade history with exact broker exit metrics.
   - 📰 **News & AI Sentiment:** Latest Gemini macroeconomic notes and composite 6-hour sentiment score.
   - 🧠 **Market Regime:** Current ADX trend strength, volatility label, and active strategy matrix.
+  - 🎓 **Self-Learning & Adaptation:** Current adaptive strategy multipliers, dynamic confluence weights, active mistake signatures, and latest formulated defensive rules.
   - 🏷️ **Gold Price & Spread:** Real-time bid, ask, and spread points.
   - ⏸️ **Pause / Resume:** Remote emergency kill-switch to pause new order generation.
   - 🛑 **EMERGENCY CLOSE ALL:** Instant market order execution to flatten all open trades with confirmation guard.
 
-### 5. Institutional Risk & Execution Management
+### 6. Institutional Risk & Execution Management
 - **Dynamic Lot Sizing:** Position size dynamically calculated based on account balance, stop-loss distance, and broker pip values. Default configuration tailored to 0.01 – 0.05 lots.
 - **Dynamic ATR Trailing Stops:** Tightens stop-loss as trades advance in profit, with automated breakeven lock at 1:1 Risk-Reward ratio.
 - **Broker Filling Mode Auto-Detection:** Automatically negotiates `ORDER_FILLING_FOK`, `ORDER_FILLING_IOC`, or `ORDER_FILLING_RETURN` for Exness Standard accounts.
 - **Deal History Synchronization:** Fetches exact exit prices, swaps, and commissions from MT5 historical deal logs on position close.
 
-### 6. Web Dashboard (FastAPI & HTML5)
+### 7. Glassmorphic Web Dashboard (FastAPI & Chart.js)
 - Real-time dark-mode command terminal on `http://localhost:8080`.
 - Fast non-blocking endpoints for account overview, positions, equity curve, and news stream.
 

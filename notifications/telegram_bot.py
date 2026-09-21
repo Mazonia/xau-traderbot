@@ -531,6 +531,63 @@ class TelegramNotifier:
 
         await self._safe_edit_or_reply(update, text=msg, reply_markup=keyboard, parse_mode="HTML")
 
+    async def _handle_learning(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle /learning command or callback button."""
+        if not self._is_authorized(update):
+            return
+
+        try:
+            from ai.trade_learner import trade_learner
+            metrics = trade_learner.get_learning_metrics()
+        except Exception as e:
+            logger.error(f"Error getting learning metrics: {e}")
+            metrics = {}
+
+        mults = metrics.get("strategy_multipliers", {})
+        scalp = mults.get("scalping", 1.0)
+        day = mults.get("day_trading", 1.0)
+        swing = mults.get("swing_trading", 1.0)
+
+        weights = metrics.get("adaptive_weights", {})
+        tech = weights.get("technical", 40.0)
+        ai = weights.get("ai_prediction", 25.0)
+        sent = weights.get("sentiment", 20.0)
+        reg = weights.get("regime", 15.0)
+
+        memorized_count = metrics.get("active_mistakes_memorized", 0)
+        recent_lessons = metrics.get("recent_lessons", [])
+
+        msg = (
+            f"🎓 <b>AUTONOMOUS SELF-LEARNING & ADAPTATION</b>\n"
+            f"{'━' * 28}\n\n"
+            f"<b>Adaptive Strategy Multipliers:</b>\n"
+            f"  • <b>Scalping:</b> <code>{scalp:.2f}x</code> {'(✅ Conviction Boost)' if scalp > 1.0 else ('(⚠️ Cautious Sizing)' if scalp < 1.0 else '')}\n"
+            f"  • <b>Day Trading:</b> <code>{day:.2f}x</code> {'(✅ Conviction Boost)' if day > 1.0 else ('(⚠️ Cautious Sizing)' if day < 1.0 else '')}\n"
+            f"  • <b>Swing:</b> <code>{swing:.2f}x</code>\n\n"
+            f"<b>Dynamic Confluence Distribution:</b>\n"
+            f"  • 📊 Technical: <code>{tech:.1f}%</code>\n"
+            f"  • 🤖 AI Model: <code>{ai:.1f}%</code>\n"
+            f"  • 📰 News Sentiment: <code>{sent:.1f}%</code>\n"
+            f"  • 🧠 Market Regime: <code>{reg:.1f}%</code>\n\n"
+            f"<b>Mistake Memory Guard:</b>\n"
+            f"  • <b>Active Guarded Traps:</b> <code>{memorized_count}</code>\n"
+        )
+
+        if recent_lessons:
+            latest = recent_lessons[0]
+            cat = latest.get("category", "LESSON")
+            rule = latest.get("rule", latest.get("summary", "Keep risk contained."))
+            msg += f"  • <b>Latest Learned Rule ({cat}):</b>\n    <i>\"{rule}\"</i>\n"
+        else:
+            msg += "  • <i>Mistake Memory Guard active — monitoring all trade closes.</i>\n"
+
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🔄 Refresh Learning", callback_data="cb_learning")],
+            [InlineKeyboardButton("🔙 Back to Main Menu", callback_data="cb_menu")],
+        ])
+
+        await self._safe_edit_or_reply(update, text=msg, reply_markup=keyboard, parse_mode="HTML")
+
     async def _handle_price(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /price command or button."""
         if not self._is_authorized(update):
@@ -842,6 +899,8 @@ class TelegramNotifier:
                 await self._handle_fetch_fresh_news(update, context)
             elif data == "cb_regime":
                 await self._handle_regime(update, context)
+            elif data == "cb_learning":
+                await self._handle_learning(update, context)
             elif data == "cb_price":
                 await self._handle_price(update, context)
             elif data == "cb_pause":
@@ -881,6 +940,7 @@ class TelegramNotifier:
             self._app.add_handler(CommandHandler("pnl", self._handle_pnl))
             self._app.add_handler(CommandHandler("news", self._handle_news))
             self._app.add_handler(CommandHandler("regime", self._handle_regime))
+            self._app.add_handler(CommandHandler("learning", self._handle_learning))
             self._app.add_handler(CommandHandler("price", self._handle_price))
             self._app.add_handler(CommandHandler("pause", self._handle_pause))
             self._app.add_handler(CommandHandler("resume", self._handle_resume))
@@ -1082,6 +1142,7 @@ class TelegramNotifier:
         app.add_handler(CommandHandler("pnl", self._handle_pnl))
         app.add_handler(CommandHandler("news", self._handle_news))
         app.add_handler(CommandHandler("regime", self._handle_regime))
+        app.add_handler(CommandHandler("learning", self._handle_learning))
         app.add_handler(CommandHandler("price", self._handle_price))
         app.add_handler(CommandHandler("pause", self._handle_pause))
         app.add_handler(CommandHandler("resume", self._handle_resume))

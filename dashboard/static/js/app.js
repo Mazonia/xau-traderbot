@@ -217,6 +217,7 @@ async function refreshAll() {
         refreshRegime(),
         refreshSentiment(),
         refreshNews(),
+        refreshLearning(),
     ]);
 }
 
@@ -413,6 +414,62 @@ async function refreshNews() {
             </div>
         `;
     }).join('');
+}
+
+
+// ── Self-Learning & Adaptation ──────────────────────────────────────────
+async function refreshLearning() {
+    const data = await fetchJSON('/api/learning');
+    if (!data || data.error) return;
+
+    // 1. Update Strategy Multipliers
+    const mults = data.strategy_multipliers || {};
+    const scalp = mults.scalping || 1.0;
+    const day = mults.day_trading || 1.0;
+    const swing = mults.swing_trading || 1.0;
+
+    updateMultChip('mult-scalp', 'SCALP', scalp);
+    updateMultChip('mult-day', 'DAY', day);
+    updateMultChip('mult-swing', 'SWING', swing);
+
+    // 2. Update Confluence Weights
+    const weights = data.adaptive_weights || {};
+    const tech = weights.technical || 40.0;
+    const ai = weights.ai_prediction || 25.0;
+    const sent = weights.sentiment || 20.0;
+    const reg = weights.regime || 15.0;
+
+    setText('weights-val', `${tech.toFixed(0)}% / ${ai.toFixed(0)}% / ${sent.toFixed(0)}% / ${reg.toFixed(0)}%`);
+
+    setBarWidth('w-tech', tech);
+    setBarWidth('w-ai', ai);
+    setBarWidth('w-sent', sent);
+    setBarWidth('w-reg', reg);
+
+    // 3. Update Mistake Memory Guard
+    setText('guard-count', `${data.active_mistakes_memorized || 0} Active Trap(s) Guarded`);
+    if (data.recent_lessons && data.recent_lessons.length > 0) {
+        const latest = data.recent_lessons[0];
+        setText('guard-latest-rule', `Latest: ${latest.rule || latest.summary}`);
+    }
+}
+
+function updateMultChip(id, label, val) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.textContent = `${label}: ${val.toFixed(2)}x`;
+    if (val > 1.0) {
+        el.className = 'mult-chip profit';
+    } else if (val < 1.0) {
+        el.className = 'mult-chip loss';
+    } else {
+        el.className = 'mult-chip';
+    }
+}
+
+function setBarWidth(id, pct) {
+    const el = document.getElementById(id);
+    if (el) el.style.width = `${Math.max(5, pct)}%`;
 }
 
 // ── Trade & Control Actions ─────────────────────────────────────────────

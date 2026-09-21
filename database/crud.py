@@ -12,6 +12,8 @@ from sqlalchemy import desc, func
 from loguru import logger
 
 from database.models import (
+    TradeLesson,
+    AdaptiveWeight,
     EconomicEvent,
     NewsEvent,
     PerformanceSnapshot,
@@ -376,5 +378,121 @@ def get_equity_curve(days: int = 30) -> list[dict]:
             }
             for s in snapshots
         ]
+    finally:
+        session.close()
+
+
+# ── Self-Learning & Adaptive Weight CRUD ─────────────────────────────────
+
+def save_trade_lesson(
+    ticket: int,
+    symbol: str,
+    order_type: str,
+    strategy: str,
+    profit: float,
+    outcome: str,
+    mistake_category: str,
+    lesson_summary: str,
+    defensive_rule: str,
+    mistake_signature: str = "{}",
+) -> TradeLesson:
+    """Save an analyzed trade lesson into the database."""
+    session = get_session()
+    try:
+        lesson = TradeLesson(
+            ticket=ticket,
+            symbol=symbol,
+            order_type=order_type,
+            strategy=strategy,
+            profit=profit,
+            outcome=outcome,
+            mistake_category=mistake_category,
+            lesson_summary=lesson_summary,
+            defensive_rule=defensive_rule,
+            mistake_signature=mistake_signature,
+        )
+        session.add(lesson)
+        session.commit()
+        session.refresh(lesson)
+        return lesson
+    except Exception as e:
+        session.rollback()
+        logger.error(f"Failed to save trade lesson for #{ticket}: {e}")
+        raise
+    finally:
+        session.close()
+
+
+def get_recent_lessons(limit: int = 15) -> list[TradeLesson]:
+    """Retrieve recent trade lessons and mistake analyses."""
+    session = get_session()
+    try:
+        return (
+            session.query(TradeLesson)
+            .order_by(desc(TradeLesson.created_at))
+            .limit(limit)
+            .all()
+        )
+    finally:
+        session.close()
+
+
+def save_or_update_adaptive_weight(
+    component: str,
+    weight: float,
+    multiplier: float,
+    win: bool,
+    pnl: float,
+) -> AdaptiveWeight:
+    """Update or insert adaptive weight metrics for a component/strategy."""
+    session = get_session()
+    try:
+        record = session.query(AdaptiveWeight).filter(AdaptiveWeight.component == component).first()
+        if not record:
+            record = AdaptiveWeight(
+                component=component,
+                weight=weight,
+                multiplier=multiplier,
+                win_count=1 if win else 0,
+                loss_count=0 if win else 1,
+                total_pnl=pnl,
+            )
+            session.add(record)
+        else:
+            record.weight = weight
+            record.multiplier = multiplier
+            if win:
+                record.win_count += 1
+            else:
+                record.loss_count += 1
+            record.total_pnl += pnl
+            record.updated_at = datetime.now(timezone.utc)
+
+        session.commit()
+        session.refresh(record)
+        return record
+    except Exception as e:
+        session.rollback()
+        logger.error(f"Failed to update adaptive weight for {component}: {e}")
+        raise
+    finally:
+        session.close()
+
+
+def get_all_adaptive_weights() -> dict[str, dict]:
+    """Get dictionary of all adaptive weights and multipliers."""
+    session = get_session()
+    try:
+        records = session.query(AdaptiveWeight).all()
+        return {
+            r.component: {
+                "weight": r.weight,
+                "multiplier": r.multiplier,
+                "win_count": r.win_count,
+                "loss_count": r.loss_count,
+                "total_pnl": r.total_pnl,
+            }
+            for r in records
+        }
     finally:
         session.close()

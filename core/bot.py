@@ -78,9 +78,11 @@ class TradingBot:
             "swing_trading": SwingTradingStrategy(),
         }
 
-        # ── AI ───────────────────────────────────────────────────────────
+        # ── AI & Self-Learning ───────────────────────────────────────────
         self.price_predictor = PricePredictor()
         self.signal_classifier = SignalClassifier()
+        from ai.trade_learner import trade_learner
+        self.trade_learner = trade_learner
 
         # ── News & Macro ─────────────────────────────────────────────────
         self.news_fetcher = NewsFetcher()
@@ -303,9 +305,23 @@ class TradingBot:
                             min_score=strategy.min_confluence_score,
                         )
 
-                        # Keep the best signal
+                        # Screen prospective signal through Autonomous Mistake Memory Guard
                         if confluence.should_execute:
-                            if best_confluence is None or confluence.total_score > best_confluence.total_score:
+                            approved, guard_reason, penalty = self.trade_learner.screen_prospective_signal(
+                                strategy_name=strategy_name,
+                                direction=signal.direction.value,
+                                confluence_score=confluence.total_score,
+                                regime_val=regime.regime.value if regime else "RANGING",
+                                sentiment_score=sentiment.get("score", 0) if sentiment else 0.0,
+                            )
+                            if not approved:
+                                logger.warning(f"🛡️ Signal Vetoed by Mistake Guard: {guard_reason}")
+                                continue
+
+                            # Apply any learning penalty to confluence conviction
+                            effective_score = confluence.total_score - penalty
+                            if best_confluence is None or effective_score > getattr(best_confluence, "effective_score", best_confluence.total_score):
+                                confluence.effective_score = effective_score
                                 best_signal = signal
                                 best_confluence = confluence
 
@@ -332,9 +348,14 @@ class TradingBot:
                 current_atr = float(df_h1["atr"].iloc[-1]) if df_h1 is not None and "atr" in df_h1.columns else 2.0
                 self.trailing_stop.update_all_positions(current_atr)
 
-                # ── Step 9: Sync positions & notify closes ───────────────
+                # ── Step 9: Sync positions, Learn & Notify Closes ────────
                 closed_trades = self.trade_executor.sync_positions()
                 for c_trade in closed_trades:
+                    # Autonomous learning adaptation from closed trade outcome
+                    try:
+                        lesson_res = self.trade_learner.on_trade_closed(c_trade)
+                    except Exception as e:
+                        logger.error(f"Error running trade learning on #{c_trade.get('ticket')}: {e}")
                     await self.telegram.send_trade_closed(c_trade)
 
                 # ── Step 10: Performance snapshot (every 100 cycles) ─────

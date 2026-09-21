@@ -69,6 +69,16 @@ class SignalAggregator:
         regime_analysis: Optional[dict] = None,
         min_score: float = 65.0,
     ) -> ConfluenceResult:
+        # Dynamically synchronize with self-learning adaptive weights
+        try:
+            from ai.trade_learner import trade_learner
+            cw = trade_learner.get_confluence_weights()
+            self.technical_weight = cw.get("technical", self.technical_weight)
+            self.ai_weight = cw.get("ai_prediction", self.ai_weight)
+            self.sentiment_weight = cw.get("sentiment", self.sentiment_weight)
+            self.regime_weight = cw.get("regime", self.regime_weight)
+        except Exception:
+            pass
         """
         Calculate the confluence score from all signal sources.
 
