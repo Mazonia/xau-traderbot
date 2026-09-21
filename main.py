@@ -107,7 +107,7 @@ def start_dashboard():
 
 
 def run_telegram():
-    """Run interactive Telegram Command Center in standalone mode."""
+    """Run interactive Telegram Command Center in standalone mode with native long-polling."""
     from notifications.telegram_bot import TelegramNotifier
     from core.mt5_connector import MT5Connector
 
@@ -125,21 +125,8 @@ def run_telegram():
 
     bot_wrapper = StandaloneBot(mt5)
     notifier = TelegramNotifier(bot_instance=bot_wrapper)
-
-    async def _runner():
-        await notifier.start_polling()
-        logger.success("✅ Telegram Bot is actively listening for your commands and button clicks!")
-        # Send interactive command center directly to the user's Telegram
-        await notifier.send_message(
-            "⚡ <b>XAUUSD AI Trading Bot — Command Center Online!</b>\n\n"
-            "Your bot is actively listening. Tap any button below to view status or control trading:",
-            reply_markup=notifier._get_main_keyboard(),
-        )
-        while True:
-            await asyncio.sleep(1)
-
     try:
-        asyncio.run(_runner())
+        notifier.run_standalone()
     except KeyboardInterrupt:
         logger.info("Telegram Bot terminated by user")
 

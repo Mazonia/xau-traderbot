@@ -524,7 +524,11 @@ class TelegramNotifier:
 
         closed_count = 0
         if self.bot_instance and hasattr(self.bot_instance, "trade_executor"):
-            closed_count = self.bot_instance.trade_executor.close_all_positions()
+            te = self.bot_instance.trade_executor
+            if hasattr(te, "close_all_positions"):
+                closed_count = te.close_all_positions(self.settings.symbol)
+            elif hasattr(self.bot_instance, "mt5"):
+                closed_count = self.bot_instance.mt5.close_all_positions(self.settings.symbol)
         elif self.bot_instance and hasattr(self.bot_instance, "mt5"):
             closed_count = self.bot_instance.mt5.close_all_positions(self.settings.symbol)
 
@@ -550,7 +554,13 @@ class TelegramNotifier:
 
         success = False
         if self.bot_instance and hasattr(self.bot_instance, "trade_executor"):
-            success = self.bot_instance.trade_executor.close_position(ticket, comment="Telegram manual close")
+            te = self.bot_instance.trade_executor
+            if hasattr(te, "close_trade"):
+                success = te.close_trade(ticket, reason="telegram_manual")
+            elif hasattr(te, "close_position"):
+                success = te.close_position(ticket, comment="Telegram manual close")
+        elif self.bot_instance and hasattr(self.bot_instance, "mt5"):
+            success = self.bot_instance.mt5.close_position(ticket, comment="telegram_manual")
 
         if success:
             msg = f"✅ Position <b>#{ticket}</b> closed successfully."
@@ -653,9 +663,12 @@ class TelegramNotifier:
         await update.effective_message.reply_text(msg, parse_mode="HTML")
 
     async def _callback_router(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Route callback queries from inline buttons."""
+        """Route callback queries from inline buttons with instant answer."""
         query = update.callback_query
-        await query.answer()
+        try:
+            await query.answer()
+        except Exception:
+            pass
 
         data = query.data
         if data == "cb_menu":
@@ -873,3 +886,50 @@ class TelegramNotifier:
             [InlineKeyboardButton("📱 Open Menu", callback_data="cb_menu")],
         ])
         await self.send_message(msg, reply_markup=keyboard)
+
+
+    def run_standalone(self):
+        """Run standalone Telegram interactive polling loop using run_polling()."""
+        if not self._enabled:
+            logger.error("Telegram bot is not enabled. Check TELEGRAM_BOT_TOKEN.")
+            return
+
+        app = ApplicationBuilder().token(self.bot_token).build()
+        self._app = app
+
+        # Register command handlers
+        app.add_handler(CommandHandler(["start", "menu"], self._handle_start))
+        app.add_handler(CommandHandler("status", self._handle_status))
+        app.add_handler(CommandHandler(["positions", "pos"], self._handle_positions))
+        app.add_handler(CommandHandler("trades", self._handle_trades))
+        app.add_handler(CommandHandler("pnl", self._handle_pnl))
+        app.add_handler(CommandHandler("news", self._handle_news))
+        app.add_handler(CommandHandler("regime", self._handle_regime))
+        app.add_handler(CommandHandler("price", self._handle_price))
+        app.add_handler(CommandHandler("pause", self._handle_pause))
+        app.add_handler(CommandHandler("resume", self._handle_resume))
+        app.add_handler(CommandHandler("closeall", self._handle_confirm_closeall))
+        app.add_handler(CommandHandler("setlot", self._handle_set_lot))
+        app.add_handler(CommandHandler("setrisk", self._handle_set_risk))
+        app.add_handler(CommandHandler("help", self._handle_help))
+
+        # Register callback button router
+        app.add_handler(CallbackQueryHandler(self._callback_router))
+
+        async def post_init(application):
+            logger.success("⚡ Telegram Bot is actively listening for your commands and button clicks!")
+            try:
+                await application.bot.send_message(
+                    chat_id=self.chat_id,
+                    text="⚡ <b>XAUUSD AI Trading Bot — Command Center Online!</b>\n\n"
+                         "Your bot is actively listening with ZERO-LATENCY response.\n"
+                         "Tap any button below to view status or control trading:",
+                    reply_markup=self._get_main_keyboard(),
+                    parse_mode="HTML"
+                )
+            except Exception as e:
+                logger.warning(f"Could not send welcome message: {e}")
+
+        app.post_init = post_init
+        logger.info("Starting Telegram Bot real-time polling (poll_interval=0.0s for instant response)...")
+        app.run_polling(poll_interval=0.0, drop_pending_updates=False)

@@ -270,3 +270,16 @@ class TradeExecutor:
                     exit_price=0.0,  # Unknown
                     profit=0.0,  # Unknown — will be updated on next check
                 )
+
+    def close_position(self, ticket: int, comment: str = "manual") -> bool:
+        """Alias for close_trade for compatibility."""
+        return self.close_trade(ticket=ticket, reason=comment)
+
+    def close_all_positions(self, symbol: str | None = None) -> int:
+        """Close all open positions and update database records immediately."""
+        positions = self.mt5.get_open_positions(symbol)
+        closed_count = 0
+        for pos in positions:
+            if self.close_trade(pos["ticket"], reason="emergency_closeall"):
+                closed_count += 1
+        return closed_count

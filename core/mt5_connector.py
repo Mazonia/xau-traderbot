@@ -374,6 +374,19 @@ class MT5Connector:
 
     # ── Trade Execution (Primitives) ─────────────────────────────────────
 
+    def _get_filling_mode(self, symbol: str) -> int:
+        """Determine the broker-supported order filling mode (e.g. Exness)."""
+        try:
+            info = mt5.symbol_info(symbol)
+            if info is not None and hasattr(info, "filling_mode"):
+                if info.filling_mode & 1:
+                    return mt5.ORDER_FILLING_FOK
+                elif info.filling_mode & 2:
+                    return mt5.ORDER_FILLING_IOC
+        except Exception:
+            pass
+        return mt5.ORDER_FILLING_RETURN
+
     def send_market_order(
         self,
         order_type: str,
@@ -432,7 +445,7 @@ class MT5Connector:
             "magic": magic,
             "comment": comment,
             "type_time": mt5.ORDER_TIME_GTC,
-            "type_filling": mt5.ORDER_FILLING_IOC,
+            "type_filling": self._get_filling_mode(symbol),
         }
 
         result = mt5.order_send(request)
@@ -535,7 +548,7 @@ class MT5Connector:
             "magic": position.magic,
             "comment": comment,
             "type_time": mt5.ORDER_TIME_GTC,
-            "type_filling": mt5.ORDER_FILLING_IOC,
+            "type_filling": self._get_filling_mode(symbol),
         }
 
         result = mt5.order_send(request)
