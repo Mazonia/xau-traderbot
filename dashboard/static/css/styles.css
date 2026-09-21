@@ -576,7 +576,41 @@ body.dark-theme {
 .header-right {
     display: flex;
     align-items: center;
-    gap: 12px;
+    gap: 10px;
+}
+
+.position-overlay-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 10px;
+    border-radius: 6px;
+    font-size: 11px;
+    font-weight: 700;
+    font-family: var(--font-mono);
+    cursor: pointer;
+    background: rgba(59, 130, 246, 0.15);
+    border: 1px solid rgba(59, 130, 246, 0.35);
+    color: #93C5FD;
+    transition: var(--transition-snappy);
+    user-select: none;
+}
+
+.position-overlay-toggle:hover {
+    background: rgba(59, 130, 246, 0.25);
+    transform: translateY(-1px);
+    box-shadow: 0 0 10px rgba(59, 130, 246, 0.3);
+}
+
+.position-overlay-toggle:active {
+    transform: scale(0.97);
+}
+
+.position-overlay-toggle.off {
+    background: rgba(255, 255, 255, 0.04);
+    border-color: var(--card-border);
+    color: var(--text-muted);
+    box-shadow: none;
 }
 
 .live-stream-badge {

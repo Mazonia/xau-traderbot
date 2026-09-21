@@ -18,6 +18,10 @@ let previousPrice = 0;
 let reconnectAttempts = 0;
 const MAX_RECONNECT = 10;
 const POLL_INTERVAL = 3000; // 3 seconds real-time fallback
+let showPositionsOnChart = true;
+let chartPriceLines = [];
+let lastCachedPositions = [];
+let lastCachedPending = [];
 
 // ── Initialization ──────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
@@ -136,6 +140,132 @@ async function loadChartData(tf) {
             setText('legend-c', `$${last.close.toFixed(2)}`);
             updatePriceDisplay(last.close);
         }
+        // Re-apply open position lines on the newly loaded timeframe
+        updateChartPositionOverlays();
+    }
+}
+
+// ── Chart Position & Order Visual Overlay Engine ────────────────────────
+function togglePositionsOverlay() {
+    showPositionsOnChart = !showPositionsOnChart;
+    const btn = document.getElementById('btn-toggle-pos-overlay');
+    const label = document.getElementById('overlay-status-text');
+
+    if (btn && label) {
+        if (showPositionsOnChart) {
+            btn.className = 'position-overlay-toggle active';
+            label.textContent = 'Positions: ON';
+        } else {
+            btn.className = 'position-overlay-toggle off';
+            label.textContent = 'Positions: OFF';
+        }
+    }
+
+    updateChartPositionOverlays(lastCachedPositions, lastCachedPending);
+}
+
+function updateChartPositionOverlays(positions, pendingOrders) {
+    if (Array.isArray(positions)) lastCachedPositions = positions;
+    if (Array.isArray(pendingOrders)) lastCachedPending = pendingOrders;
+
+    if (!candleSeries || typeof LightweightCharts === 'undefined') return;
+
+    // Clear existing price lines
+    chartPriceLines.forEach(line => {
+        try {
+            candleSeries.removePriceLine(line);
+        } catch (e) {
+            console.debug('Error removing price line:', e);
+        }
+    });
+    chartPriceLines = [];
+
+    if (!showPositionsOnChart) return;
+
+    // 1. Render Active Open Positions (Entry, SL, TP)
+    if (Array.isArray(lastCachedPositions)) {
+        lastCachedPositions.forEach(pos => {
+            if (!pos.price_open) return;
+            const isBuy = (pos.type || '').toUpperCase().includes('BUY');
+            const entryColor = isBuy ? '#3B82F6' : '#F97316';
+
+            // Entry Price Line
+            const entryLine = candleSeries.createPriceLine({
+                price: pos.price_open,
+                color: entryColor,
+                lineWidth: 2,
+                lineStyle: LightweightCharts.LineStyle.Solid,
+                axisLabelVisible: true,
+                title: `OPEN ${pos.type} ${pos.volume?.toFixed(2)} (#${pos.ticket})`,
+            });
+            chartPriceLines.push(entryLine);
+
+            // Stop Loss Line
+            if (pos.sl && pos.sl > 0) {
+                const slLine = candleSeries.createPriceLine({
+                    price: pos.sl,
+                    color: '#EF4444',
+                    lineWidth: 1,
+                    lineStyle: LightweightCharts.LineStyle.Dashed,
+                    axisLabelVisible: true,
+                    title: `SL #${pos.ticket} ($${pos.sl.toFixed(2)})`,
+                });
+                chartPriceLines.push(slLine);
+            }
+
+            // Take Profit Line
+            if (pos.tp && pos.tp > 0) {
+                const tpLine = candleSeries.createPriceLine({
+                    price: pos.tp,
+                    color: '#10B981',
+                    lineWidth: 1,
+                    lineStyle: LightweightCharts.LineStyle.Dashed,
+                    axisLabelVisible: true,
+                    title: `TP #${pos.ticket} ($${pos.tp.toFixed(2)})`,
+                });
+                chartPriceLines.push(tpLine);
+            }
+        });
+    }
+
+    // 2. Render Scheduled Pending Orders (Limit, SL, TP)
+    if (Array.isArray(lastCachedPending)) {
+        lastCachedPending.forEach(ord => {
+            if (!ord.price || ord.price <= 0) return;
+            const ordLine = candleSeries.createPriceLine({
+                price: ord.price,
+                color: '#F59E0B',
+                lineWidth: 1,
+                lineStyle: LightweightCharts.LineStyle.Dotted,
+                axisLabelVisible: true,
+                title: `LIMIT ${ord.type} ${ord.volume?.toFixed(2)} (#${ord.ticket})`,
+            });
+            chartPriceLines.push(ordLine);
+
+            if (ord.sl && ord.sl > 0) {
+                const ordSl = candleSeries.createPriceLine({
+                    price: ord.sl,
+                    color: 'rgba(239, 68, 68, 0.75)',
+                    lineWidth: 1,
+                    lineStyle: LightweightCharts.LineStyle.Dotted,
+                    axisLabelVisible: true,
+                    title: `LIMIT SL #${ord.ticket}`,
+                });
+                chartPriceLines.push(ordSl);
+            }
+
+            if (ord.tp && ord.tp > 0) {
+                const ordTp = candleSeries.createPriceLine({
+                    price: ord.tp,
+                    color: 'rgba(16, 185, 129, 0.75)',
+                    lineWidth: 1,
+                    lineStyle: LightweightCharts.LineStyle.Dotted,
+                    axisLabelVisible: true,
+                    title: `LIMIT TP #${ord.ticket}`,
+                });
+                chartPriceLines.push(ordTp);
+            }
+        });
     }
 }
 
@@ -438,6 +568,10 @@ async function refreshPositions() {
         fetchJSON('/api/positions'),
         fetchJSON('/api/pending')
     ]);
+
+    const posListRaw = Array.isArray(positionsData) ? positionsData : (positionsData?.positions || []);
+    const pendListRaw = Array.isArray(pendingData) ? pendingData : [];
+    updateChartPositionOverlays(posListRaw, pendListRaw);
 
     const countBadge = document.getElementById('open-positions-count');
     const pendingBadge = document.getElementById('pending-orders-count');
