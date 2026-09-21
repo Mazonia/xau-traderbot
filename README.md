@@ -1,254 +1,231 @@
-# ⚡ XAUUSD AI Trading Bot
+# 🏆 XAUUSD AI Trading Bot v3.0 Pro
 
-[![Python 3.11+](https://img.shields.io/badge/Python-3.11%2B-blue.svg)](https://www.python.org/)
-[![MetaTrader 5](https://img.shields.io/badge/Broker-Exness%20%2F%20MT5-green.svg)](https://www.metatrader5.com/)
-[![AI Powered](https://img.shields.io/badge/AI-Gemini%203.6%20Flash%20%2B%20XGBoost-orange.svg)](https://deepmind.google/technologies/gemini/)
-[![Tests](https://img.shields.io/badge/Tests-18%2F18%20Passing-brightgreen.svg)](https://pytest.org/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
+[![MetaTrader 5](https://img.shields.io/badge/MetaTrader-5-red.svg)](https://www.metatrader5.com/)
+[![FastAPI](https://img.shields.io/badge/FastAPI-0.100%2B-009688.svg)](https://fastapi.tiangolo.com/)
+[![XGBoost](https://img.shields.io/badge/XGBoost-AI-green.svg)](https://xgboost.readthedocs.io/)
+[![Gemini LLM](https://img.shields.io/badge/Google-Gemini_2.0_Flash-4285F4.svg)](https://ai.google.dev/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-An institutional-grade, fully autonomous algorithmic trading robot designed for **Gold (XAUUSD)** via **MetaTrader 5 (Exness)**. It fuses classical quantitative technical strategies with modern machine learning (XGBoost) and deep macroeconomic intelligence powered by **Gemini 3.6 Flash**.
-
----
-
-## 🌟 Key Highlights & Features
-
-### 1. Multi-Strategy Confluence Engine
-- **Scalping Strategy (M5 / M1):** High-frequency momentum scalping using EMA 30/60/200 crossovers, RSI bounds, and MACD divergence.
-- **Day Trading Strategy (H1 / M15):** Trend-following channel breakouts using Bollinger Bands and ATR expansion.
-- **Swing Trading Strategy (H4 / D1):** Multi-day macroeconomic trend capture with dynamic support/resistance zones.
-- **Confluence Aggregator:** Weights technical indicators (40%), XGBoost classification (25%), Gemini sentiment (20%), and market regime (15%) into a 0–100 score. Only signals exceeding threshold (default: 65–75) execute.
-
-### 2. Deep Macro News & Sentiment Intelligence
-- **Dual-Stream Aggregation:** Live continuous news polling from both **Finnhub** and **Alpha Vantage** (monetary policy, inflation, and fiscal topics).
-- **Gemini 3.6 Flash Macro Reasoning:** Generates structured macroeconomic analysis evaluating impact on gold price, USD yields, and risk-off sentiment.
-- **High-Impact Event Cooldowns:** Detects imminent or breaking macroeconomic events (FOMC rate decisions, Non-Farm Payrolls, CPI, GDP) and automatically pauses entries during extreme volatility spikes.
-
-### 3. Machine Learning Signal Classifier
-- **XGBoost Classifier:** Trained on multi-timeframe engineered indicators (RSI, MACD, Bollinger position, ATR ratios, momentum, and returns lags).
-- **Directional Probability:** Generates real-time probabilistic output for `BUY`, `SELL`, and `HOLD` with confidence scoring.
-
-### 5. Interactive 2-Way Telegram Command Center
-- **Zero-Latency Real-Time Polling:** Runs on continuous long-polling (`poll_interval=0.0s`) for instantaneous response times (< 100ms).
-- **Native Telegram Menu:** Registered server-side via `setMyCommands` (accessible via the `[Menu]` button in Telegram).
-- **Interactive Inline Buttons:**
-  - 📊 **Status & Balance:** Instant account balance, equity, margin level, and bot health.
-  - 📈 **Open Positions:** Live positions with floating P&L and individual ticket close buttons.
-  - 💰 **P&L Summary:** Realized daily and 30-day performance.
-  - 📜 **Recent Trades:** Full trade history with exact broker exit metrics.
-  - 📰 **News & AI Sentiment:** Latest Gemini macroeconomic notes and composite 6-hour sentiment score.
-  - 🧠 **Market Regime:** Current ADX trend strength, volatility label, and active strategy matrix.
-  - 🎓 **Self-Learning & Adaptation:** Current adaptive strategy multipliers, dynamic confluence weights, active mistake signatures, and latest formulated defensive rules.
-  - 🏷️ **Gold Price & Spread:** Real-time bid, ask, and spread points.
-  - ⏸️ **Pause / Resume:** Remote emergency kill-switch to pause new order generation.
-  - 🛑 **EMERGENCY CLOSE ALL:** Instant market order execution to flatten all open trades with confirmation guard.
-
-### 6. Institutional Risk & Execution Management
-- **Dynamic Lot Sizing:** Position size dynamically calculated based on account balance, stop-loss distance, and broker pip values. Default configuration tailored to 0.01 – 0.05 lots.
-- **Dynamic ATR Trailing Stops:** Tightens stop-loss as trades advance in profit, with automated breakeven lock at 1:1 Risk-Reward ratio.
-- **Broker Filling Mode Auto-Detection:** Automatically negotiates `ORDER_FILLING_FOK`, `ORDER_FILLING_IOC`, or `ORDER_FILLING_RETURN` for Exness Standard accounts.
-- **Deal History Synchronization:** Fetches exact exit prices, swaps, and commissions from MT5 historical deal logs on position close.
-
-### 7. Glassmorphic Web Dashboard (FastAPI & Chart.js)
-- Real-time dark-mode command terminal on `http://localhost:8080`.
-- Fast non-blocking endpoints for account overview, positions, equity curve, and news stream.
+An institutional-grade, fully autonomous AI trading bot designed for **XAUUSD (Gold)** on **MetaTrader 5**. Features a **Temporal Self-Attention Market Scorer**, **XGBoost Machine Learning Engine**, **LLM Self-Learning & Failure Memory**, **Multi-Layer News Deduplication**, **Pending Order Guardian**, and a **Real-Time Web Dashboard** with live TradingView position overlays.
 
 ---
 
-## 🏗️ Architecture Overview
+## 🌟 Key Features & Innovations
 
-```
-                           ┌────────────────────────┐
-                           │   Telegram Remote UI   │
-                           │  (Mobile Command Ctr)  │
-                           └───────────▲────────────┘
-                                       │ 50-100ms
-┌──────────────────────┐   ┌───────────▼────────────┐   ┌──────────────────────┐
-│  Market Data Feed    │──▶│      TradingBot        │◀──│  News APIs (Finnhub  │
-│ (MetaTrader 5 / M5-D1)│   │   Orchestrator Loop    │   │   & Alpha Vantage)   │
-└──────────────────────┘   └───────────┬────────────┘   └──────────┬───────────┘
-                                       │                           │
-                   ┌───────────────────┼───────────────────┐       ▼
-                   ▼                   ▼                   ▼ ┌───────────────┐
-         ┌───────────────────┐┌──────────────────┐┌─────────▼┐│ Gemini 3.6    │
-         │ Technical Analysis││ Regime Detector  ││ XGBoost  ││ Flash Engine │
-         │ (RSI, MACD, BB)   ││ (ADX & Volatility││Classifier│└───────┬───────┘
-         └─────────┬─────────┘└────────┬─────────┘└────┬─────┘        │
-                   │                   │               │              │
-                   └───────────────────┼───────────────┴──────────────┘
-                                       ▼
-                         ┌───────────────────────────┐
-                         │   Confluence Aggregator   │
-                         │   (Score 0 - 100 Points)  │
-                         └─────────────┬─────────────┘
-                                       ▼
-                         ┌───────────────────────────┐
-                         │   Risk Manager & Safety   │
-                         │ (Daily Loss, Margin, Lot) │
-                         └─────────────┬─────────────┘
-                                       │ ~2ms IPC
-                                       ▼
-                         ┌───────────────────────────┐
-                         │    MetaTrader 5 Terminal  │
-                         │ (Exness Trade Execution)  │
-                         └───────────────────────────┘
+### 🧠 1. Temporal Self-Attention Market Scorer
+Inspired by official MQL5 Algorithmic Trading Neural Network research:
+- **Scaled Dot-Product Self-Attention**: Quantifies inter-period query/key relationships across multi-scale rolling feature windows (M1, M5, M15, H1).
+- **Attention Concentration Index (ACI)**: Measures weight dispersion to detect regime switches, market compression, and breakout conviction.
+- **Dynamic Threshold Adaptation**: Automatically tightens or loosens trade entry confidence requirements based on real-time market entropy.
+
+### 📊 2. Candlestick Physics & Stationarity Engine
+Processes 61 normalized features computed on every tick/candle:
+- **Anatomy Ratios**: `candle_body_ratio`, `upper_wick_ratio`, `lower_wick_ratio`, and `candle_conviction`.
+- **Stationarity Transformation**: Z-score normalized log-returns (`log_return_zscore_20`) preventing non-stationary drift.
+- **Volume & Force Metrics**: `volume_intensity` and `effort_result_ratio` to validate institutional liquidity surges.
+
+### 🤖 3. XGBoost Machine Learning Model
+- **Large-Scale Training**: Trained on 10,000+ historical M5/M15 MT5 candles.
+- **Probabilistic Scoring**: Generates calibrated confidence probabilities for `BUY`, `SELL`, and `NEUTRAL` signals.
+- **Auto-Retraining Pipeline**: Standalone script (`scripts/train_ai.py`) for automated hyperparameter tuning and model export.
+
+### 🧠 4. Autonomous Self-Learning & Mistake Memory Guard
+- **Trade Post-Mortem Analysis**: Powered by Google Gemini LLM to analyze every losing trade.
+- **Vector Database Memory**: Stores failure context in local `ChromaDB`.
+- **Pre-Trade Guard Check**: Queries past mistake memory before issuing new trades to prevent repeating historic bad entries in similar market states.
+
+### 🛡️ 5. Pending Order Guardian & Smart Midway Exits
+- **Limit/Stop Order Guardian**: Continuously evaluates pending orders against shifted technical indicators or high-impact news, autonomously canceling obsolete limit orders.
+- **Smart Midway Exits**: Monitors active position health, trailing stop loss based on ATR volatility, and exiting early if market sentiment flips sharply against open positions.
+
+### 📰 6. Multi-Layer News & Sentiment Deduplication
+- **SHA-256 Canonical Hashing**: Prevents redundant processing of duplicate RSS headlines across sources.
+- **Temporal & Normalized Matching**: Strips timestamps, dynamic numbers, and source tags to eliminate repetitive news notifications and sentiment bias.
+- **Impact Classification**: Integrates high-impact economic calendar events directly into signal filtering.
+
+### 📈 7. Interactive Real-Time Web Dashboard
+- **Live TradingView Position Overlay**: View real-time XAUUSD price action with interactive lines showing open `BUY`/`SELL` entries, Stop Loss, and Take Profit levels.
+- **Streaming Metrics**: WebSocket-powered live P&L, balance, equity, win rate, drawdown, and risk meter.
+- **Interactive Control Modal**: Quick regime inspection, model barometer score breakdown, and system status toggles.
+
+### 📱 8. Telegram Remote Bot Controller
+- **Interactive Keyboards**: Quick menu buttons for status, balance, manual trade triggers, and regime breakdown.
+- **Commands**: `/regime`, `/status`, `/balance`, `/closeall`, `/cancelall`, `/help`.
+- **Real-Time Push Notifications**: instant trade placement, pending order execution, stop loss hits, and news summary alerts.
+
+---
+
+## 🏗️ System Architecture
+
+```mermaid
+flowchart TD
+    subgraph Market Data & MT5
+        MT5[MetaTrader 5 Terminal] -->|Ticks & OHLCV| DataFetcher[Data Fetcher & Streamer]
+        NewsRSS[Economic News RSS Feeds] -->|Raw Headlines| NewsDedup[News Deduplication & SHA-256 Engine]
+    end
+
+    subgraph Feature Engineering & Signal Engine
+        DataFetcher --> TechEngine[Technical Indicator & Physics Engine]
+        TechEngine -->|61 Stationarity Features| AttentionScorer[Temporal Self-Attention Scorer]
+        TechEngine -->|Normalized Features| XGBoost[XGBoost AI Classifier]
+        NewsDedup --> GeminiNews[Gemini Sentiment Analyzer]
+        
+        AttentionScorer --> Aggregator[Signal Aggregator]
+        XGBoost --> Aggregator
+        GeminiNews --> Aggregator
+    end
+
+    subgraph Execution & Memory Safety
+        Aggregator --> MistakeGuard[ChromaDB Mistake Memory Guard]
+        MistakeGuard -->|Approved Signal| OrderExecutor[MT5 Trade Executor]
+        OrderExecutor -->|Open Trades / Pending Orders| OrderGuardian[Pending Guardian & Smart Exits]
+        OrderGuardian -->|Cancel / Close| MT5
+    end
+
+    subgraph Interface & Monitoring
+        OrderExecutor -->|WebSockets| Dashboard[FastAPI Web Dashboard]
+        OrderExecutor -->|Alerts| Telegram[Telegram Bot]
+    end
 ```
 
 ---
 
-## 🚀 Quick Start Guide (Windows)
-
-### 1. Prerequisites
-- **Windows 10 / 11**
-- **Python 3.11+** installed and added to your `PATH`
-- **MetaTrader 5 Terminal** (installed with your Exness Demo or Live login)
-- Valid API Keys:
-  - **Google Gemini API Key** (for news reasoning)
-  - **Finnhub API Key** (for market news stream)
-  - **Alpha Vantage API Key** (for monetary & economic news)
-  - **Telegram Bot Token & Chat ID** (from [@BotFather](https://t.me/botfather))
-
-### 2. Installation
-Clone the repository:
-```bash
-git clone https://github.com/Mazonia/xau-traderbot.git
-cd xau-traderbot
-```
-
-Install dependencies:
-```powershell
-python -m pip install -r requirements.txt
-```
-
-### 3. Configuration
-Configure your environment variables in `.env`:
-```env
-# MetaTrader 5 / Exness
-MT5_LOGIN=your_mt5_account_number
-MT5_PASSWORD=your_mt5_password
-MT5_SERVER=Exness-MT5Trial10  # or your broker server name
-
-# Telegram Bot
-TELEGRAM_BOT_TOKEN=your_bot_token_from_botfather
-TELEGRAM_CHAT_ID=your_telegram_chat_id
-
-# AI & News APIs
-GEMINI_API_KEY=your_gemini_api_key
-FINNHUB_API_KEY=your_finnhub_api_key
-ALPHA_VANTAGE_API_KEY=your_alpha_vantage_api_key
-
-# Bot Operational Settings
-DEMO_MODE=true
-SYMBOL=XAUUSD
-LOG_LEVEL=INFO
-```
-
-### 4. Running the Components
-
-We provide dedicated one-click Windows batch launchers:
-
-| Batch Script | PowerShell Command | Description |
-| :--- | :--- | :--- |
-| **`run_bot.bat`** | `.\run_bot.bat` | Starts the autonomous live trading bot engine |
-| **`run_telegram.bat`** | `.\run_telegram.bat` | Starts the standalone interactive Telegram Command Center |
-| **`run_dashboard.bat`** | `.\run_dashboard.bat` | Launches the web dashboard on `http://localhost:8080` |
-| **`run_backtest.bat`** | `.\run_backtest.bat` | Runs historical backtest simulation with full metrics |
-| **`run.bat`** | `.\run.bat --help` | Universal CLI launcher with UTF-8 support |
-
----
-
-## 📱 Telegram Command Reference
-
-| Command | Action |
-| :--- | :--- |
-| `/start` or `/menu` | Open the interactive Command Center button dashboard |
-| `/status` | View account balance, floating profit, margin level, and bot state |
-| `/positions` | List open trades with floating P&L and individual close buttons |
-| `/pnl` | View today's realized profit/loss and 30-day performance |
-| `/trades` | View last 5 closed trades with exact exit price and net profit |
-| `/news` | View current macro sentiment score and Gemini market analysis |
-| `/regime` | View current market regime (trending/ranging) and active strategies |
-| `/price` | Real-time XAUUSD bid, ask, and spread points |
-| `/pause` | Temporarily pause automated trade execution |
-| `/resume` | Resume automated trade execution |
-| `/closeall` | Trigger immediate confirmation to close all open trades |
-| `/setlot <size>` | Set default lot size (e.g. `/setlot 0.02`) |
-| `/setrisk <pct>` | Set max risk percent per trade (e.g. `/setrisk 1.5`) |
-| `/help` | Show command cheatsheet and usage tips |
-
----
-
-## 🧪 Testing & Verification
-
-Run the automated test suite:
-```powershell
-python -m pytest -v
-```
-All **18 unit tests** validate:
-- Backtesting performance calculation (Sharpe ratio, max drawdown, win rate)
-- Risk manager margin constraints, spread boundaries, and lot sizing
-- Strategy generation and regime detection
-- Confluence aggregation and opposing sentiment filters
-- Technical indicator calculations (RSI, MACD, Bollinger Bands, ATR)
-
----
-
-## 📁 Repository Structure
+## 📂 Project Structure
 
 ```
 XAUUSD-AI-Trading-Bot/
-├── ai/                     # Machine Learning & AI Models
-│   ├── models/             # Trained XGBoost & Scaler artifacts
-│   ├── price_predictor.py  # Deep learning price sequence predictor
-│   └── signal_classifier.py# XGBoost classifier for directional prediction
-├── analysis/               # Quantitative & Technical Analysis
-│   ├── sentiment.py        # Sentiment score aggregation & decay
-│   └── technical.py        # 40+ technical indicator pipelines
-├── backtesting/            # Historical Simulation Engine
-│   ├── backtester.py       # Event-driven backtesting engine
-│   └── performance.py      # Sharpe, Sortino, Drawdown, Profit Factor
-├── config/                 # Settings & Configuration
-│   ├── settings.py         # Pydantic settings with validation
-│   └── trading_params.yaml # Tunable strategy and risk parameters
-├── core/                   # Core Engine Orchestration
-│   ├── bot.py              # Main trading loop & lifecycle
-│   ├── mt5_connector.py    # MetaTrader 5 IPC connector & deal history
-│   └── scheduler.py        # Background task scheduler
-├── dashboard/              # Web Dashboard
-│   ├── app.py              # FastAPI application server
-│   └── static/             # HTML5, CSS3, and JavaScript front-end
-├── database/               # Persistence Layer
-│   ├── crud.py             # Database query operations
-│   └── models.py           # SQLAlchemy database schemas
-├── execution/              # Order Execution & Safety
-│   ├── risk_manager.py     # Position sizing & risk rules
-│   ├── trade_executor.py   # MT5 market order execution & position sync
-│   └── trailing_stop.py    # Dynamic ATR trailing stop & breakeven
-├── news/                   # Macro Intelligence
-│   ├── economic_events.py  # High-impact calendar & cooldown logic
-│   ├── news_analyzer.py    # Gemini 3.6 Flash reasoning & FinBERT
-│   └── news_fetcher.py     # Finnhub & Alpha Vantage news aggregator
-├── notifications/          # Alerts & Remote Control
-│   ├── alert_manager.py    # Priority throttling & notification delivery
-│   └── telegram_bot.py     # 2-way interactive Telegram Command Center
-├── tests/                  # Automated Test Suite (Pytest)
-├── requirements.txt        # Python package dependencies
-├── run.bat                 # Universal launcher script (UTF-8)
-├── run_bot.bat             # Start trading bot launcher
-├── run_dashboard.bat       # Start web dashboard launcher
-├── run_telegram.bat        # Start Telegram Command Center launcher
-└── run_backtest.bat        # Start backtesting launcher
+├── ai/                        # Machine Learning & Attention Scorer
+│   ├── attention_scorer.py    # Temporal Self-Attention & Concentration Index
+│   ├── classifier.py          # XGBoost Model Loading & Inference
+│   ├── self_learning.py       # Gemini LLM Trade Post-Mortem & Vector DB Memory
+│   └── models/                # Saved XGBoost (.json/.pkl) & Scalers
+├── analysis/                  # Technical Indicators & Market Physics
+│   ├── technical.py           # 61 Stationarity Features & Candlestick Anatomy
+│   └── regime_detector.py     # Volatility, Trend & Entropy Regime Detection
+├── config/                    # Configuration Files
+│   ├── settings.py            # Central System Configuration & Parameters
+│   └── .env                   # Environment Variables & API Keys
+├── core/                      # Core Trading Engine
+│   ├── bot.py                 # Main Trading Bot Orchestrator
+│   ├── executor.py            # MT5 Trade Placement, SL/TP & Orders
+│   ├── models.py              # Data Models (Signal, Trade, Regime)
+│   └── mt5_interface.py       # MetaTrader 5 API Wrapper
+├── dashboard/                 # Real-Time Web Interface
+│   ├── app.py                 # FastAPI Web Server & API Routes
+│   ├── templates/             # HTML Dashboard UI
+│   └── static/                # CSS, JavaScript (Chart.js & TradingView)
+├── database/                  # SQLite Database Storage
+│   └── crud.py                # Trade History, System Logs & Metrics Persistence
+├── news/                      # News & Sentiment Engine
+│   ├── fetcher.py             # RSS Economic News Scraper
+│   ├── news_utils.py          # SHA-256 Headline Normalization & Deduplication
+│   └── analyzer.py            # Gemini Sentiment Analysis
+├── notifications/             # Remote Telegram Interface
+│   ├── telegram_bot.py        # Telegram Bot Commands & Async Handlers
+│   └── keyboards.py           # Interactive Inline Keyboard Menus
+├── scripts/                   # Training & Utility Scripts
+│   └── train_ai.py            # XGBoost Model Training Script (10,000 candles)
+├── audit_full_system.py       # System Diagnostic & End-to-End Verification
+├── main.py                    # Application Entry Point
+├── README.md                  # Project Documentation
+└── requirements.txt           # Python Dependencies
 ```
 
 ---
 
-## ⚠️ Risk Disclaimer
+## ⚡ Installation & Setup Guide
 
-Trading Foreign Exchange and Commodities (including Gold / XAUUSD) on margin carries a high level of risk and may not be suitable for all investors. The high degree of leverage can work against you as well as for you. Before deciding to trade, carefully consider your investment objectives, level of experience, and risk appetite. 
+### 1. Prerequisites
+- **Operating System**: Windows 10 / 11 (Required for MetaTrader 5 Python API).
+- **Python**: Python 3.10 or higher.
+- **MetaTrader 5**: Installed with an active Demo or Live trading account (Exness, IC Markets, etc.). Ensure **"Allow Algo Trading"** is enabled in MT5 `Tools -> Options -> Expert Advisors`.
 
-This software is developed for educational and research purposes. Always thoroughly test strategies on a **demo account** before deploying real capital.
+### 2. Clone Repository & Install Dependencies
+```bash
+git clone https://github.com/YourUsername/XAUUSD-AI-Trading-Bot.git
+cd XAUUSD-AI-Trading-Bot
+
+# Create virtual environment
+python -m venv venv
+venv\Scripts\activate
+
+# Install dependencies
+pip install -r requirements.txt
+```
+
+### 3. Configure Environment Variables
+Create or update the `.env` file in the `config/` directory:
+```env
+# MetaTrader 5 Credentials
+MT5_ACCOUNT=12345678
+MT5_PASSWORD=YourPasswordHere
+MT5_SERVER=Exness-MT5Trial6
+
+# Telegram Bot Integration
+TELEGRAM_BOT_TOKEN=123456789:ABCdefGhIJKlmNoPQRsTUVwxyZ
+TELEGRAM_CHAT_ID=987654321
+
+# Google Gemini API Key (For Sentiment & Self-Learning Memory)
+GEMINI_API_KEY=AIzaSyYourGeminiApiKeyHere
+
+# Bot Operational Settings
+SYMBOL=XAUUSD
+TIMEFRAME=M5
+RISK_PERCENT=1.0
+MAX_POSITIONS=3
+```
 
 ---
 
-## 📄 License
+## 🚀 Running the Bot
 
-Distributed under the **MIT License**. See `LICENSE` for more information.
+### Start Full Suite (Trading Bot + Web Dashboard + Telegram Bot)
+```bash
+python main.py --dashboard
+```
+- **Web Dashboard**: Access at [`http://127.0.0.1:8080`](http://127.0.0.1:8080)
+- **Telegram Bot**: Active and responding to chat commands.
+
+### Start Trading Bot Only (Headless)
+```bash
+python main.py
+```
+
+### Retrain XGBoost AI Model
+To fetch fresh M5/M15 historical data from MT5 and train the XGBoost classifier on 10,000 candles:
+```bash
+python scripts/train_ai.py
+```
+
+### Run Diagnostic System Audit
+To test MT5 connectivity, Gemini LLM API, News Deduplication, Web Dashboard, and Self-Attention Engine:
+```bash
+python audit_full_system.py
+```
+
+---
+
+## 📱 Telegram Commands & Controls
+
+| Command | Description |
+| :--- | :--- |
+| `/start` | Launch interactive menu and main dashboard overview |
+| `/status` | Check live bot operational health, open trades, and MT5 connection |
+| `/regime` | View real-time Market Regime, Volatility, and Self-Attention score |
+| `/balance` | View Account Equity, Free Margin, and Floating P&L |
+| `/closeall` | Immediately emergency close all open positions |
+| `/cancelall` | Cancel all active pending limit/stop orders |
+| `/help` | View help and command reference |
+
+---
+
+## 🛡️ Risk & Safety Disclaimer
+
+> [!WARNING]
+> Trading Forex and Gold (XAUUSD) involves substantial risk of loss and is not suitable for all investors. Past performance of algorithmic or machine learning models is not indicative of future results. Always test thoroughly on a **Demo Account** before deploying live capital.
+
+---
+
+## 📜 License
+This project is licensed under the [MIT License](LICENSE).
