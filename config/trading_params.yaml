@@ -1,0 +1,162 @@
+# ============================================
+# XAUUSD AI Trading Bot - Trading Parameters
+# ============================================
+# These parameters can be tuned without changing code.
+# Restart the bot after modifying this file.
+
+# --- Symbol ---
+symbol: XAUUSD
+symbol_suffix: ""
+
+# --- Trading Sessions (UTC) ---
+sessions:
+  asian:
+    start: "00:00"
+    end: "08:00"
+    enabled: true
+  london:
+    start: "08:00"
+    end: "16:00"
+    enabled: true
+  new_york:
+    start: "13:00"
+    end: "21:00"
+    enabled: true
+  london_ny_overlap:
+    start: "13:00"
+    end: "16:00"
+
+# --- Risk Management ---
+risk:
+  max_risk_per_trade_pct: 3.0
+  max_daily_loss_pct: 5.0
+  max_concurrent_trades: 3
+  min_free_margin_pct: 50.0
+  max_spread_points: 40
+  default_lot_size: 0.01
+  max_lot_size: 0.05
+
+# --- Scalping Strategy (M1-M5) ---
+scalping:
+  enabled: true
+  timeframes: ["M5", "M1"]
+  ema_fast: 30
+  ema_slow: 60
+  ema_trend: 200
+  rsi_period: 14
+  rsi_overbought: 70
+  rsi_oversold: 30
+  rsi_neutral: 50
+  macd_fast: 12
+  macd_slow: 26
+  macd_signal: 9
+  atr_period: 14
+  atr_sl_multiplier: 1.5
+  risk_reward_ratio: 1.5
+  min_confluence_score: 65
+  active_sessions: ["london", "new_york", "london_ny_overlap"]
+
+# --- Day Trading Strategy (M15-H1) ---
+day_trading:
+  enabled: true
+  timeframes: ["H1", "M15"]
+  ema_fast: 20
+  ema_slow: 50
+  ema_trend: 200
+  rsi_period: 14
+  rsi_overbought: 70
+  rsi_oversold: 30
+  macd_fast: 12
+  macd_slow: 26
+  macd_signal: 9
+  bollinger_period: 20
+  bollinger_std: 2
+  atr_period: 14
+  atr_sl_multiplier: 2.0
+  risk_reward_ratio: 2.0
+  min_confluence_score: 70
+  active_sessions: ["london", "new_york"]
+
+# --- Swing Trading Strategy (H4-D1) ---
+swing_trading:
+  enabled: true
+  timeframes: ["D1", "H4"]
+  ema_fast: 20
+  ema_slow: 50
+  ema_trend: 200
+  rsi_period: 14
+  rsi_overbought: 70
+  rsi_oversold: 30
+  macd_fast: 12
+  macd_slow: 26
+  macd_signal: 9
+  atr_period: 14
+  atr_sl_multiplier: 3.0
+  risk_reward_ratio: 3.0
+  min_confluence_score: 75
+  check_interval_hours: 4
+  active_sessions: ["asian", "london", "new_york"]
+
+# --- Market Regime Detection ---
+regime:
+  adx_period: 14
+  adx_trending_threshold: 25
+  adx_strong_trend_threshold: 40
+  atr_lookback_period: 100
+  high_volatility_percentile: 80
+  low_volatility_percentile: 20
+
+# --- AI / ML ---
+ai:
+  lstm_lookback_candles: 60
+  lstm_prediction_horizon: 5
+  xgboost_feature_count: 50
+  retrain_interval_days: 7
+  min_training_samples: 5000
+  prediction_confidence_threshold: 0.6
+
+# --- News & Sentiment ---
+news:
+  check_interval_minutes: 5
+  sentiment_decay_hours: 6
+  high_impact_pause_minutes: 30
+  post_event_wait_minutes: 15
+  keywords:
+    - gold
+    - XAUUSD
+    - federal reserve
+    - interest rate
+    - inflation
+    - CPI
+    - NFP
+    - nonfarm
+    - FOMC
+    - dollar
+    - DXY
+    - treasury
+    - geopolitical
+    - war
+    - tariff
+    - recession
+    - employment
+    - GDP
+
+# --- Confluence Scoring Weights ---
+confluence:
+  technical_weight: 40
+  ai_prediction_weight: 25
+  sentiment_weight: 20
+  regime_weight: 15
+
+# --- Trailing Stop ---
+trailing_stop:
+  enabled: true
+  breakeven_trigger_rr: 1.0
+  partial_close_pct: 50
+  atr_trail_multiplier: 2.0
+
+# --- Telegram ---
+telegram:
+  max_alerts_per_minute: 2
+  daily_summary_time: "21:00"
+  include_chart_screenshot: true

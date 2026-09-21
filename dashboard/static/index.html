@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>XAUUSD AI Trading Bot — Dashboard</title>
+    <meta name="description" content="Real-time AI-powered Gold trading bot monitoring dashboard">
+
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+
+    <!-- TradingView Lightweight Charts -->
+    <script src="https://unpkg.com/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"></script>
+
+    <link rel="stylesheet" href="/static/css/styles.css">
+</head>
+<body>
+    <!-- ── Header ──────────────────────────────────────────────────── -->
+    <header class="header" id="header">
+        <div class="header-left">
+            <div class="logo">
+                <span class="logo-icon">⚡</span>
+                <span class="logo-text">XAUUSD<span class="logo-highlight">AI</span></span>
+            </div>
+            <div class="header-badge" id="connection-status">
+                <span class="status-dot"></span>
+                <span>Connecting...</span>
+            </div>
+        </div>
+        <div class="header-center">
+            <div class="price-display" id="price-display">
+                <span class="price-label">XAUUSD</span>
+                <span class="price-value" id="current-price">—</span>
+                <span class="price-change" id="price-change">—</span>
+            </div>
+        </div>
+        <div class="header-right">
+            <div class="header-badge" id="regime-badge">
+                <span>Regime: —</span>
+            </div>
+            <div class="header-badge" id="sentiment-badge">
+                <span>Sentiment: —</span>
+            </div>
+            <button class="btn btn-outline" id="btn-refresh" onclick="refreshAll()">
+                ↻ Refresh
+            </button>
+        </div>
+    </header>
+
+    <!-- ── Main Grid ───────────────────────────────────────────────── -->
+    <main class="dashboard">
+        <!-- ── Top Stats Row ──────────────────────────────────────── -->
+        <section class="stats-row" id="stats-row">
+            <div class="stat-card" id="stat-balance">
+                <div class="stat-icon">💰</div>
+                <div class="stat-content">
+                    <span class="stat-label">Balance</span>
+                    <span class="stat-value" id="balance">$0.00</span>
+                </div>
+            </div>
+            <div class="stat-card" id="stat-equity">
+                <div class="stat-icon">📊</div>
+                <div class="stat-content">
+                    <span class="stat-label">Equity</span>
+                    <span class="stat-value" id="equity">$0.00</span>
+                </div>
+            </div>
+            <div class="stat-card" id="stat-pnl">
+                <div class="stat-icon">📈</div>
+                <div class="stat-content">
+                    <span class="stat-label">Daily P&L</span>
+                    <span class="stat-value" id="daily-pnl">$0.00</span>
+                </div>
+            </div>
+            <div class="stat-card" id="stat-winrate">
+                <div class="stat-icon">🎯</div>
+                <div class="stat-content">
+                    <span class="stat-label">Win Rate</span>
+                    <span class="stat-value" id="win-rate">0%</span>
+                </div>
+            </div>
+            <div class="stat-card" id="stat-trades">
+                <div class="stat-icon">📋</div>
+                <div class="stat-content">
+                    <span class="stat-label">Total Trades</span>
+                    <span class="stat-value" id="total-trades">0</span>
+                </div>
+            </div>
+            <div class="stat-card" id="stat-pf">
+                <div class="stat-icon">⚖️</div>
+                <div class="stat-content">
+                    <span class="stat-label">Profit Factor</span>
+                    <span class="stat-value" id="profit-factor">0.00</span>
+                </div>
+            </div>
+        </section>
+
+        <!-- ── Chart + Positions Row ──────────────────────────────── -->
+        <section class="main-grid">
+            <!-- Chart -->
+            <div class="card chart-card" id="chart-card">
+                <div class="card-header">
+                    <h2>📉 XAUUSD Live Chart</h2>
+                    <div class="timeframe-tabs" id="timeframe-tabs">
+                        <button class="tf-btn" data-tf="M5">M5</button>
+                        <button class="tf-btn active" data-tf="H1">H1</button>
+                        <button class="tf-btn" data-tf="H4">H4</button>
+                        <button class="tf-btn" data-tf="D1">D1</button>
+                    </div>
+                </div>
+                <div class="chart-container" id="chart-container"></div>
+            </div>
+
+            <!-- Open Positions -->
+            <div class="card positions-card" id="positions-card">
+                <div class="card-header">
+                    <h2>🔓 Open Positions</h2>
+                    <span class="badge" id="open-count">0</span>
+                </div>
+                <div class="card-body" id="positions-list">
+                    <div class="empty-state">No open positions</div>
+                </div>
+            </div>
+        </section>
+
+        <!-- ── Trade History + News Row ────────────────────────────── -->
+        <section class="bottom-grid">
+            <!-- Trade History -->
+            <div class="card" id="trades-card">
+                <div class="card-header">
+                    <h2>📜 Recent Trades</h2>
+                </div>
+                <div class="card-body scrollable">
+                    <table class="trades-table" id="trades-table">
+                        <thead>
+                            <tr>
+                                <th>Time</th>
+                                <th>Type</th>
+                                <th>Strategy</th>
+                                <th>Entry</th>
+                                <th>Exit</th>
+                                <th>Lots</th>
+                                <th>P&L</th>
+                                <th>Score</th>
+                            </tr>
+                        </thead>
+                        <tbody id="trades-body">
+                            <tr><td colspan="8" class="empty-state">No trades yet</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- News Feed -->
+            <div class="card" id="news-card">
+                <div class="card-header">
+                    <h2>📰 News & Sentiment</h2>
+                </div>
+                <div class="card-body scrollable" id="news-feed">
+                    <div class="empty-state">No news loaded</div>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <script src="/static/js/app.js"></script>
+</body>
+</html>

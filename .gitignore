@@ -1,0 +1,53 @@
+# XAUUSD AI Trading Bot - Ignore Rules
+
+# Environment & Secrets
+config/.env
+*.env
+!config/.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+dist/
+build/
+eggs/
+*.egg
+.Python
+venv/
+env/
+.venv/
+
+# AI Models (large files)
+ai/models/*.h5
+ai/models/*.pkl
+ai/models/*.joblib
+ai/models/*.keras
+!ai/models/.gitkeep
+
+# Database
+data/*.db
+data/*.db-journal
+*.sqlite3
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Logs
+logs/
+*.log
+
+# Testing
+.coverage
+htmlcov/
+.pytest_cache/
