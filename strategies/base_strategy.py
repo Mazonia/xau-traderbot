@@ -45,6 +45,11 @@ class TradingSignal:
         """Whether this signal suggests opening a trade."""
         return self.direction != SignalDirection.HOLD and self.confidence > 0
 
+    @property
+    def strategy_name(self) -> str:
+        """Alias for self.strategy."""
+        return self.strategy
+
     def __repr__(self):
         return (
             f"<Signal {self.direction.value} | {self.strategy} {self.timeframe} | "

@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings
 
 
@@ -56,6 +56,16 @@ class MT5Settings(BaseSettings):
     )
     timeout: int = 60_000  # Connection timeout in ms
 
+    @field_validator("login", mode="before")
+    @classmethod
+    def parse_login(cls, v: Any) -> int:
+        if isinstance(v, str):
+            v = v.strip()
+            if not v.isdigit():
+                return 0
+            return int(v)
+        return int(v) if v else 0
+
     model_config = _COMMON_CONFIG
 
 
@@ -63,7 +73,7 @@ class GeminiSettings(BaseSettings):
     """Google Gemini AI settings."""
 
     api_key: str = Field(default="", alias="GEMINI_API_KEY")
-    model: str = "gemini-2.0-flash"
+    model: str = "gemini-3.6-flash"
     max_tokens: int = 2048
     temperature: float = 0.3  # Low temp for factual analysis
 

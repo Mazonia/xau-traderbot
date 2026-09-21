@@ -101,6 +101,35 @@ def start_dashboard():
     )
 
 
+def run_backtest():
+    """Run historical backtesting simulation."""
+    from backtesting.backtester import Backtester
+    from core.mt5_connector import MT5Connector
+
+    logger.info("=" * 60)
+    logger.info("  Starting XAUUSD Multi-Strategy Backtester")
+    logger.info("=" * 60)
+
+    bt = Backtester(initial_balance=10_000.0, lot_size=0.02)
+    df = None
+
+    # Try fetching real data from MT5 first if available
+    try:
+        mt5 = MT5Connector()
+        if mt5.connect(max_retries=1, retry_delay=1):
+            logger.info("Fetching real historical H1 data from MT5...")
+            df = mt5.get_rates(timeframe="H1", count=2000)
+            mt5.disconnect()
+    except Exception as e:
+        logger.debug(f"MT5 historical data fetch skipped: {e}")
+
+    if df is None or len(df) < 500:
+        logger.info("Using high-fidelity synthetic Gold benchmark data (1,500 candles)...")
+        df = bt.generate_benchmark_data(bars=1500)
+
+    bt.run(df)
+
+
 async def main():
     args = parse_args()
 
@@ -108,8 +137,7 @@ async def main():
         await train_models()
 
     if args.backtest:
-        logger.info("Backtesting mode — not yet implemented")
-        # TODO: Implement backtesting
+        run_backtest()
         return
 
     if args.dashboard:

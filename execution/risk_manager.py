@@ -83,10 +83,12 @@ class RiskManager:
             return False, f"Max concurrent trades reached ({len(open_positions)}/{self.max_concurrent})"
 
         # 3. Free margin check
-        if account["margin_level"] and account["margin_level"] < self.min_free_margin_pct:
-            return False, f"Margin level too low ({account['margin_level']:.1f}% < {self.min_free_margin_pct}%)"
+        margin_level = account.get("margin_level")
+        if margin_level is not None and margin_level < self.min_free_margin_pct:
+            return False, f"Margin level too low ({margin_level:.1f}% < {self.min_free_margin_pct}%)"
 
-        free_margin_pct = (account["free_margin"] / balance * 100) if balance > 0 else 0
+        free_margin = account.get("free_margin", account.get("margin_free", balance))
+        free_margin_pct = (free_margin / balance * 100) if balance > 0 else 0
         if free_margin_pct < self.min_free_margin_pct:
             return False, f"Free margin too low ({free_margin_pct:.1f}%)"
 
