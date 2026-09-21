@@ -241,48 +241,48 @@ class TradingBot:
                     best_signal = None
                 else:
                     for strategy_name, strategy in self.strategies.items():
-                    if not strategy.enabled:
-                        continue
+                        if not strategy.enabled:
+                            continue
 
-                    # Check if regime recommends this strategy
-                    if regime and not self.regime_detector.is_strategy_recommended(
-                        strategy_name, regime
-                    ):
-                        continue
+                        # Check if regime recommends this strategy
+                        if regime and not self.regime_detector.is_strategy_recommended(
+                            strategy_name, regime
+                        ):
+                            continue
 
-                    # Select appropriate dataframe for the strategy
-                    if strategy_name == "scalping" and df_m5 is not None:
-                        df = df_m5.copy()
-                    elif strategy_name == "day_trading":
-                        df = df_h1.copy()
-                    elif strategy_name == "swing_trading" and df_h4 is not None:
-                        df = df_h4.copy()
-                    else:
-                        continue
+                        # Select appropriate dataframe for the strategy
+                        if strategy_name == "scalping" and df_m5 is not None:
+                            df = df_m5.copy()
+                        elif strategy_name == "day_trading":
+                            df = df_h1.copy()
+                        elif strategy_name == "swing_trading" and df_h4 is not None:
+                            df = df_h4.copy()
+                        else:
+                            continue
 
-                    # Run strategy
-                    signal = strategy.run(df)
+                        # Run strategy
+                        signal = strategy.run(df)
 
-                    if not signal.is_actionable:
-                        continue
+                        if not signal.is_actionable:
+                            continue
 
-                    # Calculate confluence
-                    confluence = self.signal_aggregator.calculate_confluence(
-                        strategy_signal=signal,
-                        ai_prediction=ai_prediction,
-                        sentiment=sentiment,
-                        regime_analysis={
-                            "is_recommended": True,
-                            "position_modifier": regime.position_size_modifier if regime else 1.0,
-                        },
-                        min_score=strategy.min_confluence_score,
-                    )
+                        # Calculate confluence
+                        confluence = self.signal_aggregator.calculate_confluence(
+                            strategy_signal=signal,
+                            ai_prediction=ai_prediction,
+                            sentiment=sentiment,
+                            regime_analysis={
+                                "is_recommended": True,
+                                "position_modifier": regime.position_size_modifier if regime else 1.0,
+                            },
+                            min_score=strategy.min_confluence_score,
+                        )
 
-                    # Keep the best signal
-                    if confluence.should_execute:
-                        if best_confluence is None or confluence.total_score > best_confluence.total_score:
-                            best_signal = signal
-                            best_confluence = confluence
+                        # Keep the best signal
+                        if confluence.should_execute:
+                            if best_confluence is None or confluence.total_score > best_confluence.total_score:
+                                best_signal = signal
+                                best_confluence = confluence
 
                 # ── Step 7: Execute if conditions met ────────────────────
                 if best_signal and best_confluence and best_confluence.should_execute:

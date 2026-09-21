@@ -132,11 +132,21 @@ class TelegramNotifier:
             f"<b>Time:</b> {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')}\n\n"
             f"Tap an action button below to monitor or control your bot:"
         )
-        await update.effective_message.reply_text(
-            text=text,
-            reply_markup=self._get_main_keyboard(),
-            parse_mode="HTML",
-        )
+        if update.callback_query:
+            try:
+                await update.callback_query.edit_message_text(
+                    text=text,
+                    reply_markup=self._get_main_keyboard(),
+                    parse_mode="HTML",
+                )
+            except Exception:
+                pass
+        else:
+            await update.effective_message.reply_text(
+                text=text,
+                reply_markup=self._get_main_keyboard(),
+                parse_mode="HTML",
+            )
 
     async def _handle_status(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /status command or button."""
@@ -145,7 +155,10 @@ class TelegramNotifier:
 
         account = None
         if self.bot_instance and hasattr(self.bot_instance, "mt5"):
-            account = self.bot_instance.mt5.get_account_info()
+            mt5_obj = self.bot_instance.mt5
+            is_conn = mt5_obj.is_connected() if callable(getattr(mt5_obj, "is_connected", None)) else getattr(mt5_obj, "is_connected", False)
+            if is_conn:
+                account = mt5_obj.get_account_info(auto_reconnect=False)
 
         paused = getattr(self.bot_instance, "_trading_paused", False)
         state_str = "⏸️ PAUSED" if paused else "🟢 RUNNING"
@@ -196,7 +209,10 @@ class TelegramNotifier:
 
         positions = []
         if self.bot_instance and hasattr(self.bot_instance, "mt5"):
-            positions = self.bot_instance.mt5.get_open_positions(self.settings.symbol)
+            mt5_obj = self.bot_instance.mt5
+            is_conn = mt5_obj.is_connected() if callable(getattr(mt5_obj, "is_connected", None)) else getattr(mt5_obj, "is_connected", False)
+            if is_conn:
+                positions = mt5_obj.get_open_positions(self.settings.symbol, auto_reconnect=False)
 
         keyboard_rows = []
 
@@ -336,7 +352,7 @@ class TelegramNotifier:
         session = crud.get_session()
         try:
             from database.models import NewsEvent
-            events = session.query(NewsEvent).order_by(NewsEvent.created_at.desc()).limit(3).all()
+            events = session.query(NewsEvent).order_by(NewsEvent.published_at.desc()).limit(3).all()
             if events:
                 msg += "<b>Latest Macro Analysis:</b>\n"
                 for ev in events:
@@ -406,7 +422,10 @@ class TelegramNotifier:
 
         tick = None
         if self.bot_instance and hasattr(self.bot_instance, "mt5"):
-            tick = self.bot_instance.mt5.get_current_tick(self.settings.symbol)
+            mt5_obj = self.bot_instance.mt5
+            is_conn = mt5_obj.is_connected() if callable(getattr(mt5_obj, "is_connected", None)) else getattr(mt5_obj, "is_connected", False)
+            if is_conn:
+                tick = mt5_obj.get_current_tick(self.settings.symbol, auto_reconnect=False)
 
         if tick:
             bid = tick.get("bid", 0.0)

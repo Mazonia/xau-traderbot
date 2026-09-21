@@ -50,13 +50,15 @@ class SignalClassifier:
 
             feature_df = feature_df.dropna()
 
-            # Remove non-feature columns
+            # Remove non-feature columns and ensure only numeric features
+            import numpy as np
+            numeric_df = feature_df.select_dtypes(include=[np.number])
             exclude_cols = ["target", "open", "high", "low", "close", "volume"]
-            feature_cols = [c for c in feature_df.columns if c not in exclude_cols]
+            feature_cols = [c for c in numeric_df.columns if c not in exclude_cols]
             self._feature_columns = feature_cols
 
-            X = feature_df[feature_cols].values
-            y = feature_df["target"].values
+            X = feature_df[feature_cols].astype(float).values
+            y = feature_df["target"].astype(int).values
 
             # Time series split
             tscv = TimeSeriesSplit(n_splits=5)
@@ -67,14 +69,14 @@ class SignalClassifier:
 
             # Train XGBoost
             self._model = xgb.XGBClassifier(
-                n_estimators=200,
-                max_depth=6,
+                n_estimators=100,
+                max_depth=5,
                 learning_rate=0.05,
                 subsample=0.8,
                 colsample_bytree=0.8,
-                use_label_encoder=False,
                 eval_metric="mlogloss",
                 verbosity=0,
+                n_jobs=1,
             )
 
             self._model.fit(

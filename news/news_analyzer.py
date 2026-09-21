@@ -164,14 +164,13 @@ Important context:
 
             text = response.text.strip()
 
-            # Clean potential markdown wrapping
-            if text.startswith("```"):
-                text = text.split("\n", 1)[-1]
-                if text.endswith("```"):
-                    text = text[:-3]
-                text = text.strip()
-
-            result = json.loads(text)
+            # Robust JSON extraction from potential markdown or introductory text
+            import re
+            json_match = re.search(r'\{[\s\S]*\}', text)
+            if json_match:
+                result = json.loads(json_match.group(0))
+            else:
+                result = json.loads(text)
 
             logger.info(
                 f"Gemini analysis: {result.get('sentiment')} "
@@ -207,19 +206,21 @@ Important context:
         headline = article.get("headline", "")
         summary = article.get("summary", "")
 
-        # Tier 1: FinBERT (always)
+        # Tier 1: FinBERT (fast baseline)
         finbert_result = self.analyze_with_finbert(headline + ". " + summary)
 
-        # Tier 2: Gemini (for high-confidence non-neutral articles)
+        # Tier 2: Gemini (deep financial macro reasoning)
         gemini_result = None
-        if finbert_result["confidence"] > 0.5 and finbert_result["sentiment"] != "NEUTRAL":
+        if self.settings.gemini.api_key:
+            gemini_result = await self.analyze_with_gemini(headline, summary)
+        elif finbert_result["confidence"] > 0.5 and finbert_result["sentiment"] != "NEUTRAL":
             gemini_result = await self.analyze_with_gemini(headline, summary)
         else:
             gemini_result = {
                 "sentiment": finbert_result["sentiment"],
                 "score": finbert_result["score"],
                 "impact_level": "LOW",
-                "analysis": "Low-confidence article — skipped deep analysis",
+                "analysis": "Gemini API key not configured",
             }
 
         # Combine scores (weighted average: 40% FinBERT, 60% Gemini)

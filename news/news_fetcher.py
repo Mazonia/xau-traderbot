@@ -113,8 +113,8 @@ class NewsFetcher:
 
     async def fetch_alpha_vantage_news(
         self,
-        tickers: str = "FOREX:XAU",
-        topics: str = "economy_fiscal,economy_monetary",
+        tickers: Optional[str] = None,
+        topics: str = "economy_monetary,economy_fiscal,financial_markets",
     ) -> list[dict]:
         """
         Fetch news with sentiment from Alpha Vantage.
@@ -133,12 +133,13 @@ class NewsFetcher:
         url = "https://www.alphavantage.co/query"
         params = {
             "function": "NEWS_SENTIMENT",
-            "tickers": tickers,
             "topics": topics,
             "sort": "LATEST",
             "limit": "50",
             "apikey": self.alpha_vantage_key,
         }
+        if tickers:
+            params["tickers"] = tickers
 
         try:
             async with httpx.AsyncClient(timeout=15) as client:
@@ -179,7 +180,7 @@ class NewsFetcher:
                     "headline": headline,
                     "summary": summary,
                     "url": article.get("url", ""),
-                    "category": ",".join(article.get("topics", [])[:3]) if article.get("topics") else "",
+                    "category": ",".join([t.get("topic", "") if isinstance(t, dict) else str(t) for t in article.get("topics", [])[:3]]),
                     "published_at": pub_time,
                     "av_sentiment_score": float(overall_sentiment),
                     "av_sentiment_label": sentiment_label,

@@ -60,14 +60,16 @@ class MT5Connector:
 
     # ── Connection Management ────────────────────────────────────────────
 
-    def connect(self) -> bool:
+    def connect(self, max_retries: int | None = None, retry_delay: float | None = None) -> bool:
         """
         Initialize connection to MT5 terminal with auto-retry.
 
         Returns:
             True if connected successfully, False otherwise.
         """
-        for attempt in range(1, self._max_retries + 1):
+        retries = max_retries if max_retries is not None else self._max_retries
+        delay = retry_delay if retry_delay is not None else self._retry_delay
+        for attempt in range(1, retries + 1):
             try:
                 # Initialize MT5
                 init_kwargs = {
@@ -84,10 +86,10 @@ class MT5Connector:
                 if not mt5.initialize(**init_kwargs):
                     error = mt5.last_error()
                     logger.warning(
-                        f"MT5 init attempt {attempt}/{self._max_retries} failed: {error}"
+                        f"MT5 init attempt {attempt}/{retries} failed: {error}"
                     )
-                    if attempt < self._max_retries:
-                        time.sleep(self._retry_delay * attempt)  # Exponential backoff
+                    if attempt < retries:
+                        time.sleep(delay * attempt)  # Exponential backoff
                     continue
 
                 self._connected = True
@@ -108,8 +110,8 @@ class MT5Connector:
 
             except Exception as e:
                 logger.error(f"MT5 connection error (attempt {attempt}): {e}")
-                if attempt < self._max_retries:
-                    time.sleep(self._retry_delay * attempt)
+                if attempt < retries:
+                    time.sleep(delay * attempt)
 
         logger.critical("Failed to connect to MT5 after all retries")
         return False
@@ -279,10 +281,11 @@ class MT5Connector:
 
     # ── Account Information ──────────────────────────────────────────────
 
-    def get_account_info(self) -> dict | None:
+    def get_account_info(self, auto_reconnect: bool = True) -> dict | None:
         """Get current account information."""
-        if not self.ensure_connected():
-            return None
+        if not self.is_connected():
+            if not auto_reconnect or not self.ensure_connected():
+                return None
 
         info = mt5.account_info()
         if info is None:

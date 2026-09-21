@@ -36,6 +36,11 @@ def parse_args():
         help="Start web dashboard only (no trading)",
     )
     parser.add_argument(
+        "--telegram",
+        action="store_true",
+        help="Start interactive Telegram Command Center only",
+    )
+    parser.add_argument(
         "--demo",
         action="store_true",
         default=True,
@@ -101,6 +106,44 @@ def start_dashboard():
     )
 
 
+def run_telegram():
+    """Run interactive Telegram Command Center in standalone mode."""
+    from notifications.telegram_bot import TelegramNotifier
+    from core.mt5_connector import MT5Connector
+
+    logger.info("=" * 60)
+    logger.info("  Starting Telegram Command Center (Standalone Mode)")
+    logger.info("=" * 60)
+
+    mt5 = MT5Connector()
+    mt5.connect(max_retries=1, retry_delay=1)
+
+    class StandaloneBot:
+        def __init__(self, mt5_conn):
+            self.mt5 = mt5_conn
+            self._trading_paused = False
+
+    bot_wrapper = StandaloneBot(mt5)
+    notifier = TelegramNotifier(bot_instance=bot_wrapper)
+
+    async def _runner():
+        await notifier.start_polling()
+        logger.success("✅ Telegram Bot is actively listening for your commands and button clicks!")
+        # Send interactive command center directly to the user's Telegram
+        await notifier.send_message(
+            "⚡ <b>XAUUSD AI Trading Bot — Command Center Online!</b>\n\n"
+            "Your bot is actively listening. Tap any button below to view status or control trading:",
+            reply_markup=notifier._get_main_keyboard(),
+        )
+        while True:
+            await asyncio.sleep(1)
+
+    try:
+        asyncio.run(_runner())
+    except KeyboardInterrupt:
+        logger.info("Telegram Bot terminated by user")
+
+
 def run_backtest():
     """Run historical backtesting simulation."""
     from backtesting.backtester import Backtester
@@ -130,30 +173,34 @@ def run_backtest():
     bt.run(df)
 
 
-async def main():
+def main():
     args = parse_args()
-
-    if args.train:
-        await train_models()
-
-    if args.backtest:
-        run_backtest()
-        return
 
     if args.dashboard:
         start_dashboard()
         return
 
-    # Start the trading bot
+    if args.telegram:
+        run_telegram()
+        return
+
+    if args.backtest:
+        run_backtest()
+        return
+
+    if args.train:
+        asyncio.run(train_models())
+
+    # Start the live trading bot
     from core.bot import TradingBot
 
     bot = TradingBot()
-    await bot.start()
+    asyncio.run(bot.start())
 
 
 if __name__ == "__main__":
     try:
-        asyncio.run(main())
+        main()
     except KeyboardInterrupt:
         logger.info("Bot terminated by user")
         sys.exit(0)
