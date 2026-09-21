@@ -36,12 +36,14 @@ class NewsAnalyzer:
 
         self._finbert_checked = True
         try:
+            import os
+            os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")
             from transformers import pipeline
 
             self._finbert_pipeline = pipeline(
                 "sentiment-analysis",
                 model="ProsusAI/finbert",
-                return_all_scores=True,
+                top_k=None,
             )
             logger.info("FinBERT model loaded successfully")
             return self._finbert_pipeline
@@ -145,13 +147,14 @@ class NewsAnalyzer:
             text = text[:512]
             results = pipeline(text)
 
-            if not results or not results[0]:
+            if not results:
                 return {"sentiment": "NEUTRAL", "score": 0.0, "confidence": 0.0}
 
-            scores = {r["label"]: r["score"] for r in results[0]}
-            positive = scores.get("positive", 0)
-            negative = scores.get("negative", 0)
-            neutral = scores.get("neutral", 0)
+            items = results[0] if isinstance(results[0], list) else results
+            scores = {str(r.get("label", "")).lower(): float(r.get("score", 0)) for r in items if isinstance(r, dict)}
+            positive = scores.get("positive", 0.0)
+            negative = scores.get("negative", 0.0)
+            neutral = scores.get("neutral", 0.0)
 
             # Determine sentiment
             if positive > negative and positive > neutral:
