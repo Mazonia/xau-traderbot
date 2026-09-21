@@ -155,12 +155,15 @@ class TelegramNotifier:
                 InlineKeyboardButton("🧠 Market Regime", callback_data="cb_regime"),
             ],
             [
+                InlineKeyboardButton("🎓 Self-Learning & Adaptation", callback_data="cb_learning"),
                 InlineKeyboardButton("🏷️ Gold Price & Spread", callback_data="cb_price"),
+            ],
+            [
                 pause_btn,
+                InlineKeyboardButton("🔄 Refresh Menu", callback_data="cb_menu"),
             ],
             [
                 InlineKeyboardButton("🛑 EMERGENCY CLOSE ALL", callback_data="cb_confirm_closeall"),
-                InlineKeyboardButton("🔄 Refresh Menu", callback_data="cb_menu"),
             ],
         ]
         return InlineKeyboardMarkup(keyboard)
@@ -302,27 +305,46 @@ class TelegramNotifier:
                 f"The bot is scanning market regimes and waiting for high-confluence entry signals."
             )
         else:
-            msg = f"📈 <b>OPEN POSITIONS ({len(positions)})</b>\n{'━' * 25}\n\n"
-            for pos in positions:
-                ticket = pos.get("ticket")
-                direction = pos.get("type", "BUY")
-                volume = pos.get("volume", 0.0)
-                entry = pos.get("price_open", pos.get("open_price", 0.0))
-                current = pos.get("price_current", pos.get("current_price", 0.0))
-                profit = pos.get("profit", 0.0)
-                p_emoji = "🟢" if profit >= 0 else "🔴"
-                dir_emoji = "📈" if direction == "BUY" else "📉"
+            msg = ""
+            if positions:
+                msg += f"📈 <b>OPEN POSITIONS ({len(positions)})</b>\n{'━' * 25}\n\n"
+                for pos in positions:
+                    ticket = pos.get("ticket")
+                    direction = pos.get("type", "BUY")
+                    volume = pos.get("volume", 0.0)
+                    entry = pos.get("price_open", pos.get("open_price", 0.0))
+                    current = pos.get("price_current", pos.get("current_price", 0.0))
+                    profit = pos.get("profit", 0.0)
+                    p_emoji = "🟢" if profit >= 0 else "🔴"
+                    dir_emoji = "📈" if direction == "BUY" else "📉"
 
-                msg += (
-                    f"{dir_emoji} <b>Ticket #{ticket}</b> | {direction} {volume} lots\n"
-                    f"   • Entry: <code>${entry:,.2f}</code> → Now: <code>${current:,.2f}</code>\n"
-                    f"   • P&L: {p_emoji} <code>${profit:+,.2f}</code>\n"
-                    f"   • SL: <code>${pos.get('sl', 0.0):,.2f}</code> | TP: <code>${pos.get('tp', 0.0):,.2f}</code>\n\n"
-                )
-                # Add action button for each position
-                keyboard_rows.append([
-                    InlineKeyboardButton(f"❌ Close #{ticket} (${profit:+,.1f})", callback_data=f"cb_close_{ticket}")
-                ])
+                    msg += (
+                        f"{dir_emoji} <b>Ticket #{ticket}</b> | {direction} {volume} lots\n"
+                        f"   • Entry: <code>${entry:,.2f}</code> → Now: <code>${current:,.2f}</code>\n"
+                        f"   • P&L: {p_emoji} <code>${profit:+,.2f}</code>\n"
+                        f"   • SL: <code>${pos.get('sl', 0.0):,.2f}</code> | TP: <code>${pos.get('tp', 0.0):,.2f}</code>\n\n"
+                    )
+                    keyboard_rows.append([
+                        InlineKeyboardButton(f"❌ Close #{ticket} (${profit:+,.1f})", callback_data=f"cb_close_{ticket}")
+                    ])
+
+            if pending:
+                msg += f"📌 <b>SCHEDULED PENDING ORDERS ({len(pending)})</b>\n{'━' * 25}\n\n"
+                for o in pending:
+                    ticket = o.get("ticket")
+                    direction = o.get("type", "LIMIT")
+                    volume = o.get("volume", 0.01)
+                    target_p = o.get("price", 0.0)
+                    sl = o.get("sl", 0.0)
+                    tp = o.get("tp", 0.0)
+                    msg += (
+                        f"⏳ <b>Order #{ticket}</b> | {direction} {volume} lots\n"
+                        f"   • Trigger Price: <code>${target_p:,.2f}</code>\n"
+                        f"   • SL: <code>${sl:,.2f}</code> | TP: <code>${tp:,.2f}</code>\n\n"
+                    )
+                    keyboard_rows.append([
+                        InlineKeyboardButton(f"🗑️ Cancel Order #{ticket}", callback_data=f"cb_cancel_{ticket}")
+                    ])
 
         keyboard_rows.append([
             InlineKeyboardButton("🔄 Refresh Positions", callback_data="cb_positions"),
@@ -775,6 +797,10 @@ class TelegramNotifier:
                 success = te.close_position(ticket, comment="Telegram manual close")
         elif self.bot_instance and hasattr(self.bot_instance, "mt5"):
             success = self.bot_instance.mt5.close_position(ticket, comment="telegram_manual")
+        else:
+            from core.mt5_connector import MT5Connector
+            mt5_obj = MT5Connector()
+            success = mt5_obj.close_position(ticket, comment="telegram_manual")
 
         if success:
             msg = f"✅ Position <b>#{ticket}</b> closed successfully."
@@ -783,6 +809,30 @@ class TelegramNotifier:
 
         keyboard = InlineKeyboardMarkup([
             [InlineKeyboardButton("📈 View Positions", callback_data="cb_positions")],
+            [InlineKeyboardButton("🔙 Main Menu", callback_data="cb_menu")],
+        ])
+        await self._safe_edit_or_reply(update, text=msg, reply_markup=keyboard, parse_mode="HTML")
+
+    async def _handle_cancel_single(self, update: Update, ticket: int):
+        """Cancel a specific pending order by ticket number."""
+        if not self._is_authorized(update):
+            return
+
+        success = False
+        if self.bot_instance and hasattr(self.bot_instance, "mt5"):
+            success = self.bot_instance.mt5.cancel_order(ticket)
+        else:
+            from core.mt5_connector import MT5Connector
+            mt5_obj = MT5Connector()
+            success = mt5_obj.cancel_order(ticket)
+
+        if success:
+            msg = f"🗑️ Scheduled Pending Order <b>#{ticket}</b> canceled successfully."
+        else:
+            msg = f"❌ Failed to cancel Order <b>#{ticket}</b>. It may have already triggered or expired."
+
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("📈 View Positions & Orders", callback_data="cb_positions")],
             [InlineKeyboardButton("🔙 Main Menu", callback_data="cb_menu")],
         ])
         await self._safe_edit_or_reply(update, text=msg, reply_markup=keyboard, parse_mode="HTML")
@@ -927,6 +977,9 @@ class TelegramNotifier:
             elif data.startswith("cb_close_"):
                 ticket = int(data.split("_")[-1])
                 await self._handle_close_single(update, ticket)
+            elif data.startswith("cb_cancel_"):
+                ticket = int(data.split("_")[-1])
+                await self._handle_cancel_single(update, ticket)
         except Exception as e:
             logger.error(f"Callback error for {data}: {e}")
             try:
@@ -1169,6 +1222,26 @@ class TelegramNotifier:
 
         async def post_init(application):
             logger.success("⚡ Telegram Bot is actively listening for your commands and button clicks!")
+            try:
+                from telegram import BotCommand
+                cmds = [
+                    BotCommand("start", "Command Center & Main Menu"),
+                    BotCommand("status", "Account Balance, Equity & Health"),
+                    BotCommand("positions", "Open Positions & Pending Orders"),
+                    BotCommand("learning", "Autonomous Self-Learning Metrics"),
+                    BotCommand("news", "Macro News & Gemini Sentiment"),
+                    BotCommand("regime", "Market Regime & Active Strategies"),
+                    BotCommand("price", "Live Gold Price & Spread"),
+                    BotCommand("trades", "Recent Trade History"),
+                    BotCommand("pnl", "Daily & Monthly P&L Stats"),
+                    BotCommand("pause", "Pause Automatic Order Execution"),
+                    BotCommand("resume", "Resume Automatic Order Execution"),
+                    BotCommand("closeall", "Emergency Close All Positions"),
+                ]
+                await application.bot.set_my_commands(cmds)
+                logger.info("⚡ Registered native Telegram Menu commands via set_my_commands")
+            except Exception as e:
+                logger.warning(f"Could not set menu commands: {e}")
             try:
                 await application.bot.send_message(
                     chat_id=self.chat_id,
