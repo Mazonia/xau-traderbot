@@ -597,11 +597,21 @@ class TradingBot:
             logger.error(f"Error during scheduled model retraining: {e}")
 
     async def _process_news(self):
-        """Fetch and analyze news."""
+        """Fetch and analyze news with strict deduplication."""
         try:
             articles = await self.news_fetcher.fetch_all_news()
+            if not articles:
+                return
 
             for article in articles[:5]:   # Process top 5 most recent for fast responsiveness
+                headline = article.get("headline", "")
+                url = article.get("url", "")
+
+                # Guard: skip if already recorded in database or processed
+                if crud.is_news_already_saved(headline, url):
+                    logger.debug(f"Skipping already recorded news: {headline[:60]}")
+                    continue
+
                 analysis = await self.news_analyzer.analyze_article(article)
 
                 # Add to sentiment aggregator
@@ -614,9 +624,9 @@ class TradingBot:
                 # Save to database
                 crud.save_news_event(
                     source=article.get("source", ""),
-                    headline=article.get("headline", ""),
+                    headline=headline,
                     summary=article.get("summary", ""),
-                    url=article.get("url", ""),
+                    url=url,
                     sentiment=analysis["sentiment"],
                     sentiment_score=analysis["combined_score"],
                     finbert_score=analysis["finbert"]["score"],
@@ -626,16 +636,16 @@ class TradingBot:
                     published_at=article.get("published_at"),
                 )
 
-                # Pause trading for HIGH impact news
+                # Pause trading for HIGH impact news (only for fresh news)
                 if analysis["impact_level"] == "HIGH":
                     logger.warning(
-                        f"⚠️ HIGH IMPACT NEWS: {article['headline'][:80]}"
+                        f"⚠️ HIGH IMPACT NEWS: {headline[:80]}"
                     )
                     self.regime_detector.set_news_pause(True)
 
                     # Notify via Telegram
                     await self.telegram.send_news_alert(
-                        headline=article.get("headline", ""),
+                        headline=headline,
                         sentiment=analysis["sentiment"],
                         impact=analysis["impact_level"],
                         score=analysis["combined_score"],

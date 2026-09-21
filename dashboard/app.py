@@ -169,12 +169,23 @@ async def get_recent_news():
 
     session = get_session()
     try:
+        from news.news_utils import normalize_headline
         events = (
             session.query(NewsEvent)
             .order_by(desc(NewsEvent.fetched_at))
-            .limit(20)
+            .limit(40)
             .all()
         )
+        unique_events = []
+        seen = set()
+        for e in events:
+            norm = normalize_headline(e.headline)
+            if norm not in seen:
+                seen.add(norm)
+                unique_events.append(e)
+            if len(unique_events) >= 20:
+                break
+
         return JSONResponse([
             {
                 "headline": e.headline,
@@ -185,7 +196,7 @@ async def get_recent_news():
                 "analysis": e.gemini_analysis,
                 "time": e.fetched_at.isoformat() if e.fetched_at else None,
             }
-            for e in events
+            for e in unique_events
         ])
     finally:
         session.close()
@@ -422,12 +433,16 @@ async def refresh_news_feed():
 
         count = 0
         for article in articles[:5]:
+            headline = article.get("headline", "")
+            url = article.get("url", "")
+            if crud.is_news_already_saved(headline, url):
+                continue
             analysis = await analyzer.analyze_article(article)
-            crud.save_news_event(
+            saved = crud.save_news_event(
                 source=article.get("source", ""),
-                headline=article.get("headline", ""),
+                headline=headline,
                 summary=article.get("summary", ""),
-                url=article.get("url", ""),
+                url=url,
                 sentiment=analysis["sentiment"],
                 sentiment_score=analysis["combined_score"],
                 finbert_score=analysis["finbert"]["score"],
@@ -436,7 +451,8 @@ async def refresh_news_feed():
                 impact_level=analysis["impact_level"],
                 published_at=article.get("published_at"),
             )
-            count += 1
+            if saved:
+                count += 1
         return JSONResponse({"success": True, "articles_processed": count})
     except Exception as e:
         logger.error(f"News refresh error: {e}")
@@ -502,13 +518,13 @@ async def start_realtime_streamer():
     """Background task to broadcast real-time price updates to WebSocket subscribers."""
     import asyncio
     async def stream_loop():
-        global connected_clients
         from core.mt5_connector import MT5Connector
         logger.info("📡 Starting real-time WebSocket market streamer")
         mt5 = MT5Connector()
         while True:
             try:
-                if connected_clients:
+                clients = globals().get("connected_clients", set())
+                if clients:
                     if mt5.connect(max_retries=1, retry_delay=0.1):
                         tick = mt5.get_current_tick()
                         if tick and "bid" in tick:
@@ -548,6 +564,7 @@ async def websocket_endpoint(websocket: WebSocket):
 
 async def broadcast(data: dict):
     """Broadcast data to all connected WebSocket clients."""
+    global connected_clients
     if not connected_clients:
         return
 

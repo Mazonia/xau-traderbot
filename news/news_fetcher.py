@@ -15,7 +15,6 @@ from typing import Optional
 import httpx
 import re
 
-
 def _sanitize_log(msg: str) -> str:
     """Mask API tokens from URLs and error tracebacks."""
     return re.sub(r'([?&](?:token|apikey|api_key)=)[^&\s]+', r'\1***REDACTED***', str(msg))
@@ -23,6 +22,7 @@ def _sanitize_log(msg: str) -> str:
 from loguru import logger
 
 from config.settings import get_settings
+from news.news_utils import compute_news_hash, is_headline_relevant, normalize_headline
 
 
 class NewsFetcher:
@@ -41,19 +41,42 @@ class NewsFetcher:
         self.keywords = [kw.lower() for kw in news_params.get("keywords", ["gold", "XAUUSD"])]
         self.check_interval = news_params.get("check_interval_minutes", 5)
 
-        # Cache to avoid duplicate processing
-        self._seen_headlines: set[str] = set()
+        # Cache to avoid duplicate processing (persisted from DB across restarts)
+        self._seen_hashes: set[str] = set()
+        self._seen_headlines = self._seen_hashes  # Alias for backward compatibility
         self._last_fetch: Optional[datetime] = None
         self._alpha_vantage_cooldown_until: Optional[datetime] = None
 
-    def _headline_hash(self, headline: str) -> str:
+        self._load_seen_from_db()
+
+    def _load_seen_from_db(self):
+        """Preload recent news hashes from database so restarts never re-process news."""
+        try:
+            from database.models import get_session, NewsEvent
+            session = get_session()
+            try:
+                cutoff = datetime.now(timezone.utc) - timedelta(days=7)
+                events = session.query(NewsEvent.headline, NewsEvent.url).filter(
+                    NewsEvent.fetched_at >= cutoff
+                ).all()
+                for h_text, u_text in events:
+                    if h_text:
+                        self._seen_hashes.add(compute_news_hash(h_text, u_text or ""))
+                    if u_text:
+                        self._seen_hashes.add(hashlib.sha256(u_text.strip().lower().encode("utf-8")).hexdigest())
+                logger.info(f"📰 Preloaded {len(self._seen_hashes)} seen news hashes from database.")
+            finally:
+                session.close()
+        except Exception as e:
+            logger.debug(f"Could not preload seen news from DB: {e}")
+
+    def _headline_hash(self, headline: str, url: str = "") -> str:
         """Create a hash of a headline for deduplication."""
-        return hashlib.md5(headline.lower().strip().encode()).hexdigest()
+        return compute_news_hash(headline, url)
 
     def _is_relevant(self, headline: str, summary: str = "") -> bool:
-        """Check if an article is relevant to XAUUSD trading."""
-        text = (headline + " " + summary).lower()
-        return any(kw in text for kw in self.keywords)
+        """Check if an article is relevant to XAUUSD trading using regex word boundaries."""
+        return is_headline_relevant(headline, summary, self.keywords)
 
     async def fetch_finnhub_news(self, category: str = "general") -> list[dict]:
         """
@@ -83,22 +106,23 @@ class NewsFetcher:
             for article in articles:
                 headline = article.get("headline", "")
                 summary = article.get("summary", "")
+                art_url = article.get("url", "")
 
                 # Skip if already seen
-                h = self._headline_hash(headline)
-                if h in self._seen_headlines:
+                h = compute_news_hash(headline, art_url)
+                if h in self._seen_hashes:
                     continue
 
                 # Filter for relevance
                 if not self._is_relevant(headline, summary):
                     continue
 
-                self._seen_headlines.add(h)
+                self._seen_hashes.add(h)
                 relevant.append({
                     "source": "finnhub",
                     "headline": headline,
                     "summary": summary,
-                    "url": article.get("url", ""),
+                    "url": art_url,
                     "category": article.get("category", category),
                     "published_at": datetime.fromtimestamp(
                         article.get("datetime", 0), tz=timezone.utc
@@ -119,25 +143,26 @@ class NewsFetcher:
 
     async def fetch_alpha_vantage_news(
         self,
-        tickers: Optional[str] = None,
-        topics: str = "economy_monetary,economy_fiscal,financial_markets",
+        topics: str = "economy_macro,monetary_policy",
+        tickers: str = "FOREX:XAU",
     ) -> list[dict]:
         """
-        Fetch news with sentiment from Alpha Vantage.
+        Fetch news sentiment from Alpha Vantage.
 
         Args:
-            tickers: Comma-separated tickers (e.g., "FOREX:XAU")
             topics: Comma-separated topics
+            tickers: Comma-separated tickers
 
         Returns:
-            List of news article dicts with pre-computed sentiment.
+            List of news articles with pre-computed sentiment.
         """
         if not self.alpha_vantage_key:
             logger.warning("Alpha Vantage API key not configured")
             return []
 
         if self._alpha_vantage_cooldown_until and datetime.now(timezone.utc) < self._alpha_vantage_cooldown_until:
-            logger.debug("Alpha Vantage in cooldown window, skipping fetch.")
+            wait_m = max(1, int((self._alpha_vantage_cooldown_until - datetime.now(timezone.utc)).total_seconds() / 60))
+            logger.debug(f"Alpha Vantage in cooldown, skipping fetch (resumes in {wait_m}m)")
             return []
 
         url = "https://www.alphavantage.co/query"
@@ -171,15 +196,16 @@ class NewsFetcher:
             for article in feed:
                 headline = article.get("title", "")
                 summary = article.get("summary", "")
+                art_url = article.get("url", "")
 
-                h = self._headline_hash(headline)
-                if h in self._seen_headlines:
+                h = compute_news_hash(headline, art_url)
+                if h in self._seen_hashes:
                     continue
 
                 if not self._is_relevant(headline, summary):
                     continue
 
-                self._seen_headlines.add(h)
+                self._seen_hashes.add(h)
 
                 # Alpha Vantage provides pre-computed sentiment
                 overall_sentiment = article.get("overall_sentiment_score", 0)
@@ -197,7 +223,7 @@ class NewsFetcher:
                     "source": "alpha_vantage",
                     "headline": headline,
                     "summary": summary,
-                    "url": article.get("url", ""),
+                    "url": art_url,
                     "category": ",".join([t.get("topic", "") if isinstance(t, dict) else str(t) for t in article.get("topics", [])[:3]]),
                     "published_at": pub_time,
                     "av_sentiment_score": float(overall_sentiment),
@@ -254,5 +280,5 @@ class NewsFetcher:
 
     def clear_cache(self):
         """Clear the seen headlines cache."""
-        self._seen_headlines.clear()
+        self._seen_hashes.clear()
         logger.debug("News cache cleared")

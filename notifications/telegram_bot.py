@@ -27,7 +27,7 @@ Features:
 """
 
 import asyncio
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 from loguru import logger
 
@@ -71,8 +71,31 @@ class TelegramNotifier:
         self._is_polling = False
         self._enabled = bool(self.bot_token and self.chat_id and self.chat_id != "0")
 
+        # News alert deduplication cache
+        self._sent_news_alert_hashes: set[str] = set()
+        self._preload_alerted_news()
+
         if not self._enabled:
             logger.warning("Telegram bot not configured or chat ID missing — remote control disabled")
+
+    def _preload_alerted_news(self):
+        """Preload hashes of recent news from DB so restarts don't re-alert old high-impact items."""
+        try:
+            from database.models import get_session, NewsEvent
+            from news.news_utils import compute_news_hash
+            session = get_session()
+            try:
+                cutoff = datetime.now(timezone.utc) - timedelta(hours=48)
+                events = session.query(NewsEvent.headline, NewsEvent.url).filter(
+                    NewsEvent.fetched_at >= cutoff
+                ).all()
+                for h_text, u_text in events:
+                    if h_text:
+                        self._sent_news_alert_hashes.add(compute_news_hash(h_text, u_text or ""))
+            finally:
+                session.close()
+        except Exception as e:
+            logger.debug(f"Could not preload alerted news: {e}")
 
     def set_bot_instance(self, bot_instance: Any):
         """Link the parent TradingBot instance for live data and control."""
@@ -439,14 +462,25 @@ class TelegramNotifier:
             f"<b>AI Engine:</b> Gemini 3.6 Flash + Bullion Sentiment\n\n"
         )
 
-        # Pull top news events from DB
+        # Pull top distinct news events from DB
         session = crud.get_session()
         try:
             from database.models import NewsEvent
-            events = session.query(NewsEvent).order_by(NewsEvent.id.desc()).limit(4).all()
-            if events:
+            from news.news_utils import normalize_headline
+            events = session.query(NewsEvent).order_by(NewsEvent.id.desc()).limit(20).all()
+            unique_events = []
+            seen_headlines = set()
+            for ev in events:
+                norm = normalize_headline(ev.headline)
+                if norm not in seen_headlines:
+                    seen_headlines.add(norm)
+                    unique_events.append(ev)
+                if len(unique_events) >= 4:
+                    break
+
+            if unique_events:
                 msg += "<b>Latest Macro Analysis:</b>\n"
-                for ev in events:
+                for ev in unique_events:
                     impact_emoji = "🔴" if ev.impact_level == "HIGH" else ("🟡" if ev.impact_level == "MEDIUM" else "🟢")
                     msg += (
                         f"{impact_emoji} <b>{ev.headline[:75]}...</b>\n"
@@ -487,12 +521,16 @@ class TelegramNotifier:
             articles = await fetcher.fetch_all_news()
 
             for article in articles[:5]:
+                headline = article.get("headline", "")
+                url = article.get("url", "")
+                if crud.is_news_already_saved(headline, url):
+                    continue
                 analysis = await analyzer.analyze_article(article)
                 crud.save_news_event(
                     source=article.get("source", ""),
-                    headline=article.get("headline", ""),
+                    headline=headline,
                     summary=article.get("summary", ""),
-                    url=article.get("url", ""),
+                    url=url,
                     sentiment=analysis["sentiment"],
                     sentiment_score=analysis["combined_score"],
                     finbert_score=analysis["finbert"]["score"],
@@ -1157,7 +1195,14 @@ class TelegramNotifier:
         await self.send_message(msg, reply_markup=keyboard)
 
     async def send_news_alert(self, headline: str, sentiment: str, impact: str, score: float):
-        """Send high-impact news alert."""
+        """Send high-impact news alert with strict deduplication."""
+        from news.news_utils import compute_news_hash
+        h_hash = compute_news_hash(headline)
+        if h_hash in self._sent_news_alert_hashes:
+            logger.info(f"Skipping duplicate Telegram news alert for: {headline[:60]}")
+            return
+        self._sent_news_alert_hashes.add(h_hash)
+
         impact_emoji = {"HIGH": "🔴", "MEDIUM": "🟡", "LOW": "🟢"}.get(impact, "⚪")
         sentiment_emoji = {"BULLISH": "📈", "BEARISH": "📉", "NEUTRAL": "➡️"}.get(sentiment, "➡️")
 

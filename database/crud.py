@@ -328,6 +328,40 @@ def create_signal(
 # ── News Operations ──────────────────────────────────────────────────────
 
 
+def is_news_already_saved(headline: str, url: str = "", max_age_days: int = 7) -> bool:
+    """Check if an article with matching normalized headline or URL has already been recorded."""
+    session = get_session()
+    try:
+        from news.news_utils import normalize_headline
+        cutoff = datetime.now(timezone.utc) - timedelta(days=max_age_days)
+        # Check by url if present
+        if url and url.strip():
+            existing = session.query(NewsEvent.id).filter(
+                NewsEvent.url == url.strip(),
+                NewsEvent.fetched_at >= cutoff,
+            ).first()
+            if existing:
+                return True
+
+        norm_target = normalize_headline(headline)
+        if not norm_target:
+            return False
+
+        # Query recent headlines within time window
+        recent_headlines = session.query(NewsEvent.headline).filter(
+            NewsEvent.fetched_at >= cutoff
+        ).all()
+        for (h,) in recent_headlines:
+            if normalize_headline(h) == norm_target:
+                return True
+        return False
+    except Exception as e:
+        logger.error(f"Error checking if news already saved: {e}")
+        return False
+    finally:
+        session.close()
+
+
 def save_news_event(
     source: str,
     headline: str,
@@ -341,8 +375,12 @@ def save_news_event(
     gemini_analysis: str = "",
     impact_level: str = "LOW",
     published_at: datetime | None = None,
-) -> NewsEvent:
-    """Save a news event with sentiment analysis."""
+) -> NewsEvent | None:
+    """Save a news event with sentiment analysis, strictly deduplicated."""
+    if is_news_already_saved(headline, url):
+        logger.debug(f"Skipping duplicate news event save: {headline[:60]}")
+        return None
+
     session = get_session()
     try:
         event = NewsEvent(
@@ -366,6 +404,40 @@ def save_news_event(
         session.rollback()
         logger.error(f"Failed to save news event: {e}")
         raise
+    finally:
+        session.close()
+
+
+def cleanup_duplicate_news_events() -> int:
+    """Remove existing duplicate news events from database, keeping the latest entry."""
+    session = get_session()
+    try:
+        from news.news_utils import normalize_headline
+        events = session.query(NewsEvent).order_by(NewsEvent.id.desc()).all()
+        seen = set()
+        to_delete = []
+        for ev in events:
+            h_norm = normalize_headline(ev.headline)
+            u_str = (ev.url or "").strip().lower()
+            key = (h_norm, u_str)
+            if (h_norm and h_norm in seen) or (u_str and u_str in seen) or key in seen:
+                to_delete.append(ev.id)
+            else:
+                if h_norm:
+                    seen.add(h_norm)
+                if u_str:
+                    seen.add(u_str)
+                seen.add(key)
+
+        if to_delete:
+            session.query(NewsEvent).filter(NewsEvent.id.in_(to_delete)).delete(synchronize_session=False)
+            session.commit()
+            logger.info(f"Purged {len(to_delete)} duplicate news rows from database.")
+        return len(to_delete)
+    except Exception as e:
+        session.rollback()
+        logger.error(f"Error purging duplicate news events: {e}")
+        return 0
     finally:
         session.close()
 
