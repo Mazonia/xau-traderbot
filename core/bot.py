@@ -365,6 +365,15 @@ class TradingBot:
                     event_name=ev_name if imminent else "",
                 )
 
+                # ── Step 8c: Autonomous Pending Order Guardian ────────────
+                await self._check_pending_orders_validity(
+                    regime=regime,
+                    ai_prediction=ai_prediction,
+                    imminent_event=imminent,
+                    event_name=ev_name if imminent else "",
+                    df_h1=df_h1,
+                )
+
                 # ── Step 9: Sync positions, Learn & Notify Closes ────────
                 closed_trades = self.trade_executor.sync_positions()
                 for c_trade in closed_trades:
@@ -483,6 +492,98 @@ class TradingBot:
                             logger.error(f"Error sending smart exit Telegram message: {e}")
         except Exception as e:
             logger.error(f"Error in _check_smart_midway_exits: {e}")
+
+    async def _check_pending_orders_validity(
+        self,
+        regime,
+        ai_prediction: dict,
+        imminent_event: bool = False,
+        event_name: str = "",
+        df_h1 = None,
+    ):
+        """
+        Autonomous Pending Order Guardian.
+
+        Continuously monitors scheduled limit/stop orders:
+        1. Cancels pending orders if high-impact news shock (FOMC/NFP) is imminent.
+        2. Cancels pending orders if AI directional prediction strongly contradicts them (e.g. BUY_LIMIT vs 70%+ SELL).
+        3. Cancels pending orders if market regime shifts to hostile volatility or adverse breakout.
+        4. Cancels stale orders that have sat unfilled for > 24 hours.
+        """
+        try:
+            pending_orders = self.mt5.get_pending_orders()
+            if not pending_orders:
+                return
+
+            now_utc = datetime.now(timezone.utc)
+
+            for ord_data in pending_orders:
+                ticket = ord_data.get("ticket")
+                ord_type = ord_data.get("type", "")  # "BUY_LIMIT", "SELL_LIMIT", etc.
+                target_price = ord_data.get("price", 0.0)
+                ord_time = ord_data.get("time")
+
+                should_cancel = False
+                cancel_reason = ""
+
+                is_buy_order = "BUY" in ord_type.upper()
+                is_sell_order = "SELL" in ord_type.upper()
+
+                # Condition 1: Imminent high-impact macro event shock
+                if imminent_event:
+                    should_cancel = True
+                    cancel_reason = f"Macro Event Protection: {event_name} imminent"
+
+                # Condition 2: High-conviction AI Directional Invalidation
+                ai_dir = ai_prediction.get("direction", "")
+                ai_conf = ai_prediction.get("confidence", 0.0)
+                if is_buy_order and ai_dir == "SELL" and ai_conf >= 0.70:
+                    should_cancel = True
+                    cancel_reason = f"AI Invalidation: SELL conviction {ai_conf:.1%}"
+                elif is_sell_order and ai_dir == "BUY" and ai_conf >= 0.70:
+                    should_cancel = True
+                    cancel_reason = f"AI Invalidation: BUY conviction {ai_conf:.1%}"
+
+                # Condition 3: Regime Invalidation (Hostile Volatility / Adverse Crash)
+                if regime and regime.regime.value in ["HIGH_VOLATILITY"]:
+                    if is_buy_order and df_h1 is not None and len(df_h1) > 1:
+                        last_c = df_h1["close"].iloc[-1]
+                        prev_c = df_h1["close"].iloc[-2]
+                        if last_c < prev_c:
+                            should_cancel = True
+                            cancel_reason = "Regime Shock: High volatility cascade against limit"
+
+                # Condition 4: Order Staling (Unfilled for > 24 hours)
+                if ord_time:
+                    if ord_time.tzinfo is None:
+                        ord_time = ord_time.replace(tzinfo=timezone.utc)
+                    age_hours = (now_utc - ord_time).total_seconds() / 3600.0
+                    if age_hours >= 24.0:
+                        should_cancel = True
+                        cancel_reason = f"Order Stale: Unfilled for {age_hours:.1f} hours"
+
+                # Execute Autonomous Order Cancellation
+                if should_cancel:
+                    logger.warning(
+                        f"🛡️ PENDING ORDER GUARDIAN CANCELLED | Order #{ticket} ({ord_type} @ {target_price}) | "
+                        f"Reason: {cancel_reason}"
+                    )
+                    success = self.mt5.cancel_order(ticket)
+                    if success:
+                        try:
+                            await self.telegram.send_message(
+                                f"🛡️ <b>AUTONOMOUS ORDER CANCELLED</b>\n"
+                                f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                                f"• Order: <code>#{ticket}</code> ({ord_type})\n"
+                                f"• Target Price: <b>${target_price:,.2f}</b>\n"
+                                f"• Reason: <i>{cancel_reason}</i>\n"
+                                f"<i>Autonomous guardian cancelled pending order to prevent adverse execution.</i>"
+                            )
+                        except Exception as e:
+                            logger.error(f"Error sending Telegram order cancel alert: {e}")
+
+        except Exception as e:
+            logger.error(f"Error in _check_pending_orders_validity: {e}")
 
     async def _retrain_model_task(self):
         """Asynchronous background task to retrain XGBoost model on latest market candles."""
