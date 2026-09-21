@@ -318,8 +318,8 @@ class TradingBot:
                                 "is_recommended": True,
                                 "position_modifier": regime.position_size_modifier if regime else 1.0,
                                 "regime": regime.regime.value if regime else "RANGING",
-                                "adx": regime.adx if regime else 15.0,
-                                "volatility": regime.volatility_level if regime else "NORMAL",
+                                "adx": getattr(regime, "adx_value", 15.0) if regime else 15.0,
+                                "volatility": getattr(regime, "volatility_label", "NORMAL") if regime else "NORMAL",
                             },
                             attention_analysis=attention_analysis,
                             min_score=strategy.min_confluence_score,
@@ -648,8 +648,21 @@ class TradingBot:
                     published_at=article.get("published_at"),
                 )
 
-                # Pause trading for HIGH impact news (only for fresh news)
-                if analysis["impact_level"] == "HIGH":
+                # Pause trading for HIGH impact news (only for fresh news within 30 min)
+                pub_time = article.get("published_at")
+                is_fresh = True
+                if pub_time:
+                    try:
+                        from datetime import datetime, timezone
+                        if not pub_time.tzinfo:
+                            pub_time = pub_time.replace(tzinfo=timezone.utc)
+                        age_min = (datetime.now(timezone.utc) - pub_time).total_seconds() / 60
+                        if age_min > 30:
+                            is_fresh = False
+                    except Exception:
+                        pass
+
+                if analysis["impact_level"] == "HIGH" and is_fresh:
                     logger.warning(
                         f"⚠️ HIGH IMPACT NEWS: {headline[:80]}"
                     )

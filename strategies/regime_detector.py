@@ -50,6 +50,14 @@ class RegimeAnalysis:
         if self.reasons is None:
             self.reasons = []
 
+    @property
+    def adx(self) -> float:
+        return self.adx_value
+
+    @property
+    def volatility_level(self) -> str:
+        return self.volatility_label
+
 
 class RegimeDetector:
     """

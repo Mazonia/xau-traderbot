@@ -96,16 +96,27 @@ async def train_models():
 
 def start_dashboard():
     """Start the web dashboard server."""
+    import socket
     import uvicorn
     from config.settings import get_settings
 
     settings = get_settings()
-    logger.info(f"Starting dashboard on http://{settings.dashboard.host}:{settings.dashboard.port}")
+    host = settings.dashboard.host
+    port = settings.dashboard.port
+
+    # Check if dashboard is already running
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.settimeout(1.0)
+        if s.connect_ex((host, port)) == 0:
+            logger.warning(f"⚠️ Dashboard is already running on http://{host}:{port}! Opening browser or keeping existing instance.")
+            return
+
+    logger.info(f"Starting dashboard on http://{host}:{port}")
 
     uvicorn.run(
         "dashboard.app:app",
-        host=settings.dashboard.host,
-        port=settings.dashboard.port,
+        host=host,
+        port=port,
         reload=False,
     )
 

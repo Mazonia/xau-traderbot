@@ -1074,6 +1074,20 @@ class TelegramNotifier:
             # Register callback button router
             self._app.add_handler(CallbackQueryHandler(self._callback_router))
 
+            # Register error handler for network/conflict issues
+            async def _on_telegram_error(update: object, context: ContextTypes.DEFAULT_TYPE):
+                err = context.error
+                err_msg = str(err)
+                if "Conflict" in type(err).__name__ or "terminated by other getUpdates" in err_msg:
+                    logger.warning(
+                        "⚠️ Telegram Conflict: Another bot instance is currently active on Telegram. "
+                        "Trading alerts will still be sent, but interactive chat commands are handled by the other instance."
+                    )
+                else:
+                    logger.error(f"Telegram error: {err}")
+
+            self._app.add_error_handler(_on_telegram_error)
+
             await self._app.initialize()
             await self._app.start()
             await self._app.updater.start_polling(drop_pending_updates=True)

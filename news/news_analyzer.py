@@ -23,37 +23,52 @@ class NewsAnalyzer:
     def __init__(self):
         self.settings = get_settings()
         self._finbert_pipeline = None
+        self._finbert_checked = False
         self._gemini_client = None
+        self._gemini_cooldown_until = 0.0
 
     def _get_finbert(self):
         """Lazy-load the FinBERT sentiment pipeline."""
-        if self._finbert_pipeline is None:
-            try:
-                from transformers import pipeline
+        if self._finbert_pipeline is not None:
+            return self._finbert_pipeline
+        if self._finbert_checked:
+            return None
 
-                self._finbert_pipeline = pipeline(
-                    "sentiment-analysis",
-                    model="ProsusAI/finbert",
-                    return_all_scores=True,
-                )
-                logger.info("FinBERT model loaded successfully")
-            except Exception as e:
-                logger.error(f"Failed to load FinBERT: {e}")
-                return None
-        return self._finbert_pipeline
+        self._finbert_checked = True
+        try:
+            from transformers import pipeline
+
+            self._finbert_pipeline = pipeline(
+                "sentiment-analysis",
+                model="ProsusAI/finbert",
+                return_all_scores=True,
+            )
+            logger.info("FinBERT model loaded successfully")
+            return self._finbert_pipeline
+        except ImportError:
+            logger.info("FinBERT (transformers) not installed — using built-in financial lexicon analyzer")
+            return None
+        except Exception as e:
+            logger.warning(f"Could not load FinBERT: {e} — using financial lexicon fallback")
+            return None
 
     def _get_gemini(self):
         """Lazy-load the Gemini client."""
         if self._gemini_client is None:
             try:
                 from google import genai
+                try:
+                    from google.genai import models
+                    models.Models._logged_afc_warning = True
+                except Exception:
+                    pass
 
                 self._gemini_client = genai.Client(
                     api_key=self.settings.gemini.api_key
                 )
                 logger.info("Gemini client initialized")
             except Exception as e:
-                logger.error(f"Failed to initialize Gemini: {e}")
+                logger.warning(f"Failed to initialize Gemini: {e}")
                 return None
         return self._gemini_client
 
@@ -163,6 +178,30 @@ class NewsAnalyzer:
             logger.error(f"FinBERT analysis error: {e}")
             return {"sentiment": "NEUTRAL", "score": 0.0, "confidence": 0.0}
 
+    def _fallback_lexicon_analysis(self, headline: str, summary: str = "", reason: str = "") -> dict:
+        """Domain financial lexicon sentiment fallback for Gold."""
+        lex = self._analyze_with_lexicon(f"{headline}. {summary}")
+        factors = lex.get("factors", [])
+        abs_score = abs(lex["score"])
+        # High impact requires strong conviction and multiple macro factors
+        is_high = abs_score >= 0.7 and len(factors) >= 2
+        is_med = abs_score >= 0.3 or len(factors) >= 1
+        impact = "HIGH" if is_high else ("MEDIUM" if is_med else "LOW")
+        direction = "UP" if lex["score"] > 0.15 else ("DOWN" if lex["score"] < -0.15 else "FLAT")
+        analysis_desc = f"Macro Sentiment: {lex['sentiment']} (Score: {lex['score']:+.2f})"
+        if reason:
+            analysis_desc += f" [{reason}]"
+        return {
+            "sentiment": lex["sentiment"],
+            "score": lex["score"],
+            "impact_level": impact,
+            "expected_direction": direction,
+            "time_horizon": "SHORT",
+            "is_risk_off": lex["score"] > 0,
+            "key_factors": factors,
+            "analysis": analysis_desc,
+        }
+
     async def analyze_with_gemini(self, headline: str, summary: str = "") -> dict:
         """
         Deep analysis using Gemini API.
@@ -173,15 +212,15 @@ class NewsAnalyzer:
             Dict with 'sentiment', 'score', 'impact_level',
             'expected_direction', 'time_horizon', 'analysis'.
         """
+        import time
+
+        now = time.time()
+        if now < self._gemini_cooldown_until:
+            return self._fallback_lexicon_analysis(headline, summary, reason="Gemini Cooldown")
+
         client = self._get_gemini()
         if client is None:
-            return {
-                "sentiment": "NEUTRAL",
-                "score": 0.0,
-                "impact_level": "LOW",
-                "expected_direction": "NEUTRAL",
-                "analysis": "Gemini unavailable",
-            }
+            return self._fallback_lexicon_analysis(headline, summary, reason="Gemini Unavailable")
 
         prompt = f"""You are an expert Gold (XAUUSD) market analyst. Analyze this news article and determine its potential impact on the XAUUSD price.
 
@@ -267,33 +306,21 @@ Important context:
             return result
 
         except json.JSONDecodeError as e:
-            logger.error(f"Gemini returned invalid JSON: {e}")
-            return {
-                "sentiment": "NEUTRAL",
-                "score": 0.0,
-                "impact_level": "LOW",
-                "analysis": "Failed to parse Gemini response",
-            }
+            logger.warning(f"Gemini returned invalid JSON, using lexicon fallback: {e}")
+            return self._fallback_lexicon_analysis(headline, summary, reason="Parse Fallback")
         except Exception as e:
             err_msg = str(e)
             if self.settings.gemini.api_key:
                 err_msg = err_msg.replace(self.settings.gemini.api_key, "***GEMINI_KEY***")
-            logger.warning(f"Gemini analysis fallback (temporary issue: {err_msg[:90]}...)")
-            
-            # Intelligent fallback to domain lexicon
-            lex = self._analyze_with_lexicon(f"{headline}. {summary}")
-            impact = "HIGH" if abs(lex["score"]) >= 0.5 else ("MEDIUM" if abs(lex["score"]) >= 0.25 else "LOW")
-            direction = "UP" if lex["score"] > 0.15 else ("DOWN" if lex["score"] < -0.15 else "FLAT")
-            return {
-                "sentiment": lex["sentiment"],
-                "score": lex["score"],
-                "impact_level": impact,
-                "expected_direction": direction,
-                "time_horizon": "SHORT",
-                "is_risk_off": lex["score"] > 0,
-                "key_factors": lex.get("factors", []),
-                "analysis": f"Macro Sentiment: {lex['sentiment']} (Score: {lex['score']:+.2f})",
-            }
+
+            if "429" in err_msg or "RESOURCE_EXHAUSTED" in err_msg or "quota" in err_msg.lower():
+                import time
+                self._gemini_cooldown_until = time.time() + 60.0
+                logger.info("Gemini API rate limit reached — temporarily switching to financial lexicon analyzer (60s cooldown)")
+            else:
+                logger.warning(f"Gemini analysis fallback (temporary issue: {err_msg[:90]}...)")
+
+            return self._fallback_lexicon_analysis(headline, summary, reason="Lexicon Fallback")
 
     async def analyze_article(self, article: dict) -> dict:
         """
