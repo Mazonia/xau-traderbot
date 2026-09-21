@@ -99,6 +99,37 @@ class TelegramNotifier:
         )
         return False
 
+
+    async def _safe_edit_or_reply(self, update: Update, text: str, reply_markup: Any = None, parse_mode: str = "HTML"):
+        """Safely edit the current callback message, handling 'Message is not modified' gracefully."""
+        if update.callback_query:
+            try:
+                await update.callback_query.edit_message_text(
+                    text=text,
+                    reply_markup=reply_markup,
+                    parse_mode=parse_mode,
+                )
+                return
+            except Exception as e:
+                err_str = str(e)
+                if "Message is not modified" in err_str:
+                    try:
+                        await update.callback_query.answer("Already up to date")
+                    except Exception:
+                        pass
+                    return
+                logger.debug(f"Could not edit message, falling back to reply: {e}")
+
+        if update.effective_message:
+            try:
+                await update.effective_message.reply_text(
+                    text=text,
+                    reply_markup=reply_markup,
+                    parse_mode=parse_mode,
+                )
+            except Exception as e:
+                logger.error(f"Failed to send reply message: {e}")
+
     # ── Interactive Keyboards ─────────────────────────────────────────────
 
     def _get_main_keyboard(self) -> InlineKeyboardMarkup:
@@ -168,21 +199,12 @@ class TelegramNotifier:
             f"<b>Time:</b> {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')}\n\n"
             f"Tap an action button below to monitor or control your bot:"
         )
-        if update.callback_query:
-            try:
-                await update.callback_query.edit_message_text(
-                    text=text,
-                    reply_markup=self._get_main_keyboard(),
-                    parse_mode="HTML",
-                )
-            except Exception:
-                pass
-        else:
-            await update.effective_message.reply_text(
-                text=text,
-                reply_markup=self._get_main_keyboard(),
-                parse_mode="HTML",
-            )
+        await self._safe_edit_or_reply(
+            update,
+            text=text,
+            reply_markup=self._get_main_keyboard(),
+            parse_mode="HTML",
+        )
 
     async def _handle_status(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /status command or button."""
@@ -233,10 +255,7 @@ class TelegramNotifier:
             [InlineKeyboardButton("🔙 Back to Main Menu", callback_data="cb_menu")],
         ])
 
-        if update.callback_query:
-            await update.callback_query.edit_message_text(text=msg, reply_markup=keyboard, parse_mode="HTML")
-        else:
-            await update.effective_message.reply_text(text=msg, reply_markup=keyboard, parse_mode="HTML")
+        await self._safe_edit_or_reply(update, text=msg, reply_markup=keyboard, parse_mode="HTML")
 
     async def _handle_positions(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /positions command or button."""
@@ -244,15 +263,25 @@ class TelegramNotifier:
             return
 
         positions = []
+        is_conn = False
         if self.bot_instance and hasattr(self.bot_instance, "mt5"):
             mt5_obj = self.bot_instance.mt5
             is_conn = mt5_obj.is_connected() if callable(getattr(mt5_obj, "is_connected", None)) else getattr(mt5_obj, "is_connected", False)
+            if not is_conn and hasattr(mt5_obj, "connect"):
+                is_conn = mt5_obj.connect(max_retries=1, retry_delay=0.1)
             if is_conn:
                 positions = mt5_obj.get_open_positions(self.settings.symbol, auto_reconnect=False)
 
         keyboard_rows = []
 
-        if not positions:
+        if not is_conn:
+            msg = (
+                f"📈 <b>OPEN POSITIONS</b>\n"
+                f"{'━' * 25}\n\n"
+                f"⚠️ <i>MT5 Terminal is currently Offline.</i>\n\n"
+                f"Cannot query live positions. Please ensure MetaTrader 5 is launched on your desktop with your Exness account logged in."
+            )
+        elif not positions:
             msg = (
                 f"📈 <b>OPEN POSITIONS</b>\n"
                 f"{'━' * 25}\n\n"
@@ -288,10 +317,7 @@ class TelegramNotifier:
         ])
 
         reply_markup = InlineKeyboardMarkup(keyboard_rows)
-        if update.callback_query:
-            await update.callback_query.edit_message_text(text=msg, reply_markup=reply_markup, parse_mode="HTML")
-        else:
-            await update.effective_message.reply_text(text=msg, reply_markup=reply_markup, parse_mode="HTML")
+        await self._safe_edit_or_reply(update, text=msg, reply_markup=reply_markup, parse_mode="HTML")
 
     async def _handle_trades(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /trades command or button."""
@@ -327,10 +353,7 @@ class TelegramNotifier:
             [InlineKeyboardButton("🔙 Back to Main Menu", callback_data="cb_menu")],
         ])
 
-        if update.callback_query:
-            await update.callback_query.edit_message_text(text=msg, reply_markup=keyboard, parse_mode="HTML")
-        else:
-            await update.effective_message.reply_text(text=msg, reply_markup=keyboard, parse_mode="HTML")
+        await self._safe_edit_or_reply(update, text=msg, reply_markup=keyboard, parse_mode="HTML")
 
     async def _handle_pnl(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /pnl command or button."""
@@ -364,10 +387,7 @@ class TelegramNotifier:
             [InlineKeyboardButton("🔙 Back to Main Menu", callback_data="cb_menu")],
         ])
 
-        if update.callback_query:
-            await update.callback_query.edit_message_text(text=msg, reply_markup=keyboard, parse_mode="HTML")
-        else:
-            await update.effective_message.reply_text(text=msg, reply_markup=keyboard, parse_mode="HTML")
+        await self._safe_edit_or_reply(update, text=msg, reply_markup=keyboard, parse_mode="HTML")
 
     async def _handle_news(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /news command or button."""
@@ -409,10 +429,7 @@ class TelegramNotifier:
             [InlineKeyboardButton("🔙 Back to Main Menu", callback_data="cb_menu")],
         ])
 
-        if update.callback_query:
-            await update.callback_query.edit_message_text(text=msg, reply_markup=keyboard, parse_mode="HTML")
-        else:
-            await update.effective_message.reply_text(text=msg, reply_markup=keyboard, parse_mode="HTML")
+        await self._safe_edit_or_reply(update, text=msg, reply_markup=keyboard, parse_mode="HTML")
 
     async def _handle_regime(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /regime command or button."""
@@ -446,10 +463,7 @@ class TelegramNotifier:
             [InlineKeyboardButton("🔙 Back to Main Menu", callback_data="cb_menu")],
         ])
 
-        if update.callback_query:
-            await update.callback_query.edit_message_text(text=msg, reply_markup=keyboard, parse_mode="HTML")
-        else:
-            await update.effective_message.reply_text(text=msg, reply_markup=keyboard, parse_mode="HTML")
+        await self._safe_edit_or_reply(update, text=msg, reply_markup=keyboard, parse_mode="HTML")
 
     async def _handle_price(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /price command or button."""
@@ -483,10 +497,7 @@ class TelegramNotifier:
             [InlineKeyboardButton("🔙 Main Menu", callback_data="cb_menu")],
         ])
 
-        if update.callback_query:
-            await update.callback_query.edit_message_text(text=msg, reply_markup=keyboard, parse_mode="HTML")
-        else:
-            await update.effective_message.reply_text(text=msg, reply_markup=keyboard, parse_mode="HTML")
+        await self._safe_edit_or_reply(update, text=msg, reply_markup=keyboard, parse_mode="HTML")
 
     async def _handle_pause(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Pause the trading bot."""
@@ -505,10 +516,7 @@ class TelegramNotifier:
             [InlineKeyboardButton("🔙 Main Menu", callback_data="cb_menu")],
         ])
 
-        if update.callback_query:
-            await update.callback_query.edit_message_text(text=msg, reply_markup=keyboard, parse_mode="HTML")
-        else:
-            await update.effective_message.reply_text(text=msg, reply_markup=keyboard, parse_mode="HTML")
+        await self._safe_edit_or_reply(update, text=msg, reply_markup=keyboard, parse_mode="HTML")
 
     async def _handle_resume(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Resume the trading bot."""
@@ -527,14 +535,29 @@ class TelegramNotifier:
             [InlineKeyboardButton("🔙 Main Menu", callback_data="cb_menu")],
         ])
 
-        if update.callback_query:
-            await update.callback_query.edit_message_text(text=msg, reply_markup=keyboard, parse_mode="HTML")
-        else:
-            await update.effective_message.reply_text(text=msg, reply_markup=keyboard, parse_mode="HTML")
+        await self._safe_edit_or_reply(update, text=msg, reply_markup=keyboard, parse_mode="HTML")
 
     async def _handle_confirm_closeall(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Prompt confirmation for emergency close all."""
         if not self._is_authorized(update):
+            return
+
+        mt5_obj = getattr(self.bot_instance, "mt5", None)
+        is_conn = False
+        if mt5_obj:
+            is_conn = mt5_obj.is_connected() or mt5_obj.connect(max_retries=1, retry_delay=0.1)
+
+        if not is_conn:
+            msg = (
+                f"⚠️ <b>CANNOT CLOSE POSITIONS — MT5 OFFLINE</b>\n\n"
+                f"MetaTrader 5 terminal is not running or connected.\n"
+                f"Please start your MetaTrader 5 terminal first."
+            )
+            keyboard = InlineKeyboardMarkup([
+                [InlineKeyboardButton("📊 View Status", callback_data="cb_status")],
+                [InlineKeyboardButton("🔙 Main Menu", callback_data="cb_menu")],
+            ])
+            await self._safe_edit_or_reply(update, text=msg, reply_markup=keyboard, parse_mode="HTML")
             return
 
         msg = (
@@ -548,14 +571,29 @@ class TelegramNotifier:
             [InlineKeyboardButton("❌ Cancel", callback_data="cb_positions")],
         ])
 
-        if update.callback_query:
-            await update.callback_query.edit_message_text(text=msg, reply_markup=keyboard, parse_mode="HTML")
-        else:
-            await update.effective_message.reply_text(text=msg, reply_markup=keyboard, parse_mode="HTML")
+        await self._safe_edit_or_reply(update, text=msg, reply_markup=keyboard, parse_mode="HTML")
 
     async def _handle_do_closeall(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Execute emergency close all positions."""
         if not self._is_authorized(update):
+            return
+
+        mt5_obj = getattr(self.bot_instance, "mt5", None)
+        is_conn = False
+        if mt5_obj:
+            is_conn = mt5_obj.is_connected() or mt5_obj.connect(max_retries=1, retry_delay=0.1)
+
+        if not is_conn:
+            msg = (
+                f"⚠️ <b>CANNOT CLOSE POSITIONS — MT5 OFFLINE</b>\n\n"
+                f"MetaTrader 5 terminal is not running or connected.\n"
+                f"Please launch MetaTrader 5 on your desktop and verify your Exness login."
+            )
+            keyboard = InlineKeyboardMarkup([
+                [InlineKeyboardButton("📊 View Status", callback_data="cb_status")],
+                [InlineKeyboardButton("🔙 Main Menu", callback_data="cb_menu")],
+            ])
+            await self._safe_edit_or_reply(update, text=msg, reply_markup=keyboard, parse_mode="HTML")
             return
 
         closed_count = 0
@@ -563,25 +601,29 @@ class TelegramNotifier:
             te = self.bot_instance.trade_executor
             if hasattr(te, "close_all_positions"):
                 closed_count = te.close_all_positions(self.settings.symbol)
-            elif hasattr(self.bot_instance, "mt5"):
-                closed_count = self.bot_instance.mt5.close_all_positions(self.settings.symbol)
-        elif self.bot_instance and hasattr(self.bot_instance, "mt5"):
-            closed_count = self.bot_instance.mt5.close_all_positions(self.settings.symbol)
+            elif mt5_obj:
+                closed_count = mt5_obj.close_all_positions(self.settings.symbol)
+        elif mt5_obj:
+            closed_count = mt5_obj.close_all_positions(self.settings.symbol)
 
-        msg = (
-            f"🛑 <b>ALL POSITIONS CLOSED</b>\n\n"
-            f"Successfully closed <b>{closed_count}</b> open position(s).\n"
-            f"All trades have been flattened."
-        )
+        if closed_count > 0:
+            msg = (
+                f"🛑 <b>ALL POSITIONS CLOSED</b>\n\n"
+                f"Successfully closed <b>{closed_count}</b> open position(s).\n"
+                f"All active trades have been flattened."
+            )
+        else:
+            msg = (
+                f"ℹ️ <b>NO OPEN POSITIONS</b>\n\n"
+                f"There were no active positions open to close."
+            )
+
         keyboard = InlineKeyboardMarkup([
             [InlineKeyboardButton("📊 View Status", callback_data="cb_status")],
             [InlineKeyboardButton("🔙 Main Menu", callback_data="cb_menu")],
         ])
 
-        if update.callback_query:
-            await update.callback_query.edit_message_text(text=msg, reply_markup=keyboard, parse_mode="HTML")
-        else:
-            await update.effective_message.reply_text(text=msg, reply_markup=keyboard, parse_mode="HTML")
+        await self._safe_edit_or_reply(update, text=msg, reply_markup=keyboard, parse_mode="HTML")
 
     async def _handle_close_single(self, update: Update, ticket: int):
         """Close a specific position by ticket number."""
@@ -607,7 +649,7 @@ class TelegramNotifier:
             [InlineKeyboardButton("📈 View Positions", callback_data="cb_positions")],
             [InlineKeyboardButton("🔙 Main Menu", callback_data="cb_menu")],
         ])
-        await update.callback_query.edit_message_text(text=msg, reply_markup=keyboard, parse_mode="HTML")
+        await self._safe_edit_or_reply(update, text=msg, reply_markup=keyboard, parse_mode="HTML")
 
     async def _handle_set_lot(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Set default lot size via /setlot <size>."""
@@ -717,33 +759,41 @@ class TelegramNotifier:
             pass
 
         data = query.data
-        if data == "cb_menu":
-            await self._handle_start(update, context)
-        elif data == "cb_status":
-            await self._handle_status(update, context)
-        elif data == "cb_positions":
-            await self._handle_positions(update, context)
-        elif data == "cb_trades":
-            await self._handle_trades(update, context)
-        elif data == "cb_pnl":
-            await self._handle_pnl(update, context)
-        elif data == "cb_news":
-            await self._handle_news(update, context)
-        elif data == "cb_regime":
-            await self._handle_regime(update, context)
-        elif data == "cb_price":
-            await self._handle_price(update, context)
-        elif data == "cb_pause":
-            await self._handle_pause(update, context)
-        elif data == "cb_resume":
-            await self._handle_resume(update, context)
-        elif data == "cb_confirm_closeall":
-            await self._handle_confirm_closeall(update, context)
-        elif data == "cb_do_closeall":
-            await self._handle_do_closeall(update, context)
-        elif data.startswith("cb_close_"):
-            ticket = int(data.split("_")[-1])
-            await self._handle_close_single(update, ticket)
+        try:
+            if data == "cb_menu":
+                await self._handle_start(update, context)
+            elif data == "cb_status":
+                await self._handle_status(update, context)
+            elif data == "cb_positions":
+                await self._handle_positions(update, context)
+            elif data == "cb_trades":
+                await self._handle_trades(update, context)
+            elif data == "cb_pnl":
+                await self._handle_pnl(update, context)
+            elif data == "cb_news":
+                await self._handle_news(update, context)
+            elif data == "cb_regime":
+                await self._handle_regime(update, context)
+            elif data == "cb_price":
+                await self._handle_price(update, context)
+            elif data == "cb_pause":
+                await self._handle_pause(update, context)
+            elif data == "cb_resume":
+                await self._handle_resume(update, context)
+            elif data == "cb_confirm_closeall":
+                await self._handle_confirm_closeall(update, context)
+            elif data == "cb_do_closeall":
+                await self._handle_do_closeall(update, context)
+            elif data.startswith("cb_close_"):
+                ticket = int(data.split("_")[-1])
+                await self._handle_close_single(update, ticket)
+        except Exception as e:
+            logger.error(f"Callback error for {data}: {e}")
+            try:
+                if query.message:
+                    await query.message.reply_text(f"⚠️ Operation error: {e}")
+            except Exception:
+                pass
 
     # ── Background Polling Lifecycle ──────────────────────────────────────
 

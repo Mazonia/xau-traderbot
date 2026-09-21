@@ -149,11 +149,11 @@ class MT5Connector:
             self._connected = False
             return False
 
-    def ensure_connected(self) -> bool:
-        """Reconnect if the connection was lost."""
+    def ensure_connected(self, max_retries: int = 1, retry_delay: float = 0.1) -> bool:
+        """Reconnect if the connection was lost (default: fast fail in 1 retry)."""
         if not self.is_connected():
             logger.warning("MT5 connection lost — attempting reconnect...")
-            return self.connect()
+            return self.connect(max_retries=max_retries, retry_delay=retry_delay)
         return True
 
     # ── Market Data ──────────────────────────────────────────────────────
@@ -164,6 +164,7 @@ class MT5Connector:
         symbol: str | None = None,
         timeframe: str = "H1",
         count: int = 500,
+        auto_reconnect: bool = True,
     ) -> pd.DataFrame | None:
         """
         Fetch historical OHLCV data from MT5.
@@ -172,12 +173,14 @@ class MT5Connector:
             symbol: Trading symbol (defaults to configured XAUUSD).
             timeframe: Timeframe string (M1, M5, M15, M30, H1, H4, D1, W1, MN1).
             count: Number of candles to fetch.
+            auto_reconnect: Whether to attempt reconnection if disconnected.
 
         Returns:
             DataFrame with columns: time, open, high, low, close, tick_volume, spread
         """
-        if not self.ensure_connected():
-            return None
+        if not self.is_connected():
+            if not auto_reconnect or not self.ensure_connected(max_retries=1, retry_delay=0.1):
+                return None
 
         symbol = symbol or self.settings.symbol
         tf = TIMEFRAME_MAP.get(timeframe)
@@ -244,15 +247,16 @@ class MT5Connector:
         return df
 
     @synchronized
-    def get_current_tick(self, symbol: str | None = None) -> dict | None:
+    def get_current_tick(self, symbol: str | None = None, auto_reconnect: bool = True) -> dict | None:
         """
         Get the latest tick (bid/ask) for the symbol.
 
         Returns:
             Dict with: bid, ask, last, volume, time, spread
         """
-        if not self.ensure_connected():
-            return None
+        if not self.is_connected():
+            if not auto_reconnect or not self.ensure_connected(max_retries=1, retry_delay=0.1):
+                return None
 
         symbol = symbol or self.settings.symbol
         tick = mt5.symbol_info_tick(symbol)
@@ -271,10 +275,11 @@ class MT5Connector:
         }
 
     @synchronized
-    def get_symbol_info(self, symbol: str | None = None) -> dict | None:
+    def get_symbol_info(self, symbol: str | None = None, auto_reconnect: bool = True) -> dict | None:
         """Get symbol specifications (pip value, lot size, etc.)."""
-        if not self.ensure_connected():
-            return None
+        if not self.is_connected():
+            if not auto_reconnect or not self.ensure_connected(max_retries=1, retry_delay=0.1):
+                return None
 
         symbol = symbol or self.settings.symbol
         info = mt5.symbol_info(symbol)
@@ -326,10 +331,11 @@ class MT5Connector:
         }
 
     @synchronized
-    def get_open_positions(self, symbol: str | None = None) -> list[dict]:
+    def get_open_positions(self, symbol: str | None = None, auto_reconnect: bool = True) -> list[dict]:
         """Get all open positions, optionally filtered by symbol."""
-        if not self.ensure_connected():
-            return []
+        if not self.is_connected():
+            if not auto_reconnect or not self.ensure_connected(max_retries=1, retry_delay=0.1):
+                return []
 
         if symbol:
             positions = mt5.positions_get(symbol=symbol)
@@ -359,10 +365,11 @@ class MT5Connector:
         ]
 
     @synchronized
-    def get_pending_orders(self, symbol: str | None = None) -> list[dict]:
+    def get_pending_orders(self, symbol: str | None = None, auto_reconnect: bool = True) -> list[dict]:
         """Get all pending orders."""
-        if not self.ensure_connected():
-            return []
+        if not self.is_connected():
+            if not auto_reconnect or not self.ensure_connected(max_retries=1, retry_delay=0.1):
+                return []
 
         if symbol:
             orders = mt5.orders_get(symbol=symbol)
@@ -598,7 +605,11 @@ class MT5Connector:
 
     def close_all_positions(self, symbol: str | None = None) -> int:
         """Close all open positions. Returns count of successfully closed."""
-        positions = self.get_open_positions(symbol)
+        if not self.is_connected() and not self.ensure_connected(max_retries=1, retry_delay=0.1):
+            logger.warning("Cannot close positions — MT5 is not connected")
+            return 0
+
+        positions = self.get_open_positions(symbol, auto_reconnect=False)
         closed = 0
         for pos in positions:
             if self.close_position(pos["ticket"]):
