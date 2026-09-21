@@ -251,25 +251,53 @@ class TradeExecutor:
             comment=f"partial_{close_pct:.0f}pct",
         )
 
-    def sync_positions(self):
+    def sync_positions(self) -> list[dict]:
         """
         Sync open MT5 positions with database records.
-        Detect externally closed positions and update records.
+        Detect externally closed positions, fetch exact deal history, and return closed events.
         """
         db_open_trades = crud.get_open_trades()
         mt5_positions = self.mt5.get_open_positions()
         mt5_tickets = {p["ticket"] for p in mt5_positions}
 
+        closed_events = []
         for trade in db_open_trades:
             if trade.ticket not in mt5_tickets:
-                # Position was closed externally (hit SL/TP or manually closed)
-                logger.info(f"Position {trade.ticket} closed externally — updating DB")
-                # We don't have the exact exit price, but we can estimate
+                logger.info(f"Position {trade.ticket} closed externally — fetching deal history")
+                deal_info = self.mt5.get_closed_deal_info(trade.ticket)
+                if deal_info:
+                    exit_price = deal_info["exit_price"]
+                    profit = deal_info["profit"]
+                    swap = deal_info["swap"]
+                    commission = deal_info.get("commission", 0.0)
+                    reason = deal_info.get("comment", "SL/TP hit")
+                else:
+                    exit_price = trade.entry_price
+                    profit = 0.0
+                    swap = 0.0
+                    commission = 0.0
+                    reason = "Closed externally"
+
                 crud.close_trade(
                     ticket=trade.ticket,
-                    exit_price=0.0,  # Unknown
-                    profit=0.0,  # Unknown — will be updated on next check
+                    exit_price=exit_price,
+                    profit=profit,
+                    swap=swap,
+                    commission=commission,
                 )
+                closed_events.append({
+                    "ticket": trade.ticket,
+                    "symbol": trade.symbol,
+                    "direction": trade.order_type,
+                    "entry_price": trade.entry_price,
+                    "exit_price": exit_price,
+                    "profit": profit,
+                    "swap": swap,
+                    "commission": commission,
+                    "reason": reason,
+                })
+
+        return closed_events
 
     def close_position(self, ticket: int, comment: str = "manual") -> bool:
         """Alias for close_trade for compatibility."""

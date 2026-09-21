@@ -800,15 +800,25 @@ class TelegramNotifier:
 
     async def send_trade_closed(
         self,
-        ticket: int,
-        direction: str,
-        profit: float,
-        entry: float,
-        exit_price: float,
+        ticket: int | dict,
+        direction: str = "",
+        profit: float = 0.0,
+        entry: float = 0.0,
+        exit_price: float = 0.0,
         duration_min: int = 0,
         reason: str = "TP/SL",
     ):
         """Send trade close notification."""
+        if isinstance(ticket, dict):
+            d = ticket
+            ticket = d.get("ticket", 0)
+            direction = d.get("direction", "")
+            profit = d.get("profit", 0.0)
+            entry = d.get("entry_price", d.get("entry", 0.0))
+            exit_price = d.get("exit_price", d.get("close_price", 0.0))
+            duration_min = d.get("duration_minutes", d.get("duration_min", 0))
+            reason = d.get("reason", "TP/SL")
+
         emoji = "✅" if profit > 0 else "❌"
         profit_color = "🟢" if profit > 0 else "🔴"
 

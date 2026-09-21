@@ -41,32 +41,32 @@ async def index():
 
 @app.get("/api/account")
 async def get_account():
-    """Get current account info."""
+    """Get current account info (fast non-blocking)."""
     try:
         from core.mt5_connector import MT5Connector
         mt5 = MT5Connector()
-        if mt5.connect():
-            info = mt5.get_account_info()
-            mt5.disconnect()
-            return JSONResponse(info or {"error": "No account info"})
+        if mt5.connect(max_retries=1, retry_delay=0.1):
+            info = mt5.get_account_info(auto_reconnect=False)
+            if info:
+                return JSONResponse(info)
+        return JSONResponse({"connected": False, "status": "MT5 Terminal Offline"})
     except Exception as e:
-        return JSONResponse({"error": str(e)})
+        return JSONResponse({"connected": False, "error": str(e)})
 
 
 @app.get("/api/positions")
 async def get_positions():
-    """Get open positions."""
+    """Get open positions (fast non-blocking)."""
     try:
         from core.mt5_connector import MT5Connector
         mt5 = MT5Connector()
-        if mt5.connect():
-            positions = mt5.get_open_positions()
-            mt5.disconnect()
-            # Convert datetime objects for JSON serialization
+        if mt5.connect(max_retries=1, retry_delay=0.1):
+            positions = mt5.get_open_positions(auto_reconnect=False)
             for p in positions:
-                if "time" in p:
+                if "time" in p and hasattr(p["time"], "isoformat"):
                     p["time"] = p["time"].isoformat()
             return JSONResponse(positions)
+        return JSONResponse([])
     except Exception as e:
         return JSONResponse({"error": str(e)})
 

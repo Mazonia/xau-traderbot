@@ -583,3 +583,30 @@ class MT5Connector:
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         self.disconnect()
+
+    def get_closed_deal_info(self, ticket: int) -> dict | None:
+        """Fetch exact closing price, profit, and reason from MT5 deal history."""
+        if not self.ensure_connected():
+            return None
+        try:
+            from datetime import timedelta
+            now = datetime.now(timezone.utc)
+            from_date = now - timedelta(days=7)
+            deals = mt5.history_deals_get(from_date, now, position=ticket)
+            if deals and len(deals) > 0:
+                close_deal = deals[-1]
+                for d in reversed(deals):
+                    if hasattr(d, "entry") and d.entry == mt5.DEAL_ENTRY_OUT:
+                        close_deal = d
+                        break
+                return {
+                    "exit_price": float(close_deal.price),
+                    "profit": float(close_deal.profit),
+                    "swap": float(close_deal.swap),
+                    "commission": float(close_deal.commission),
+                    "comment": str(close_deal.comment),
+                    "time": datetime.fromtimestamp(close_deal.time, tz=timezone.utc),
+                }
+        except Exception as e:
+            logger.debug(f"Could not fetch history deal for position #{ticket}: {e}")
+        return None

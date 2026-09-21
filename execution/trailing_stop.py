@@ -45,6 +45,8 @@ class TrailingStopManager:
             return
 
         positions = self.mt5.get_open_positions()
+        open_tickets = {p["ticket"] for p in positions}
+        self.cleanup_closed(open_tickets)
 
         for pos in positions:
             self._update_position(pos, current_atr)

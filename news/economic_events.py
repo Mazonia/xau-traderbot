@@ -146,4 +146,21 @@ class EconomicEventsManager:
             except Exception:
                 continue
 
+        # 2. Check recent HIGH impact news from database (within post_event_pause_minutes)
+        try:
+            from database import crud
+            from database.models import NewsEvent
+            session = crud.get_session()
+            cutoff = now - timedelta(minutes=self.post_event_pause_minutes)
+            recent_high = session.query(NewsEvent).filter(
+                NewsEvent.impact_level == "HIGH",
+                NewsEvent.published_at >= cutoff,
+            ).first()
+            session.close()
+
+            if recent_high:
+                return True, f"High Impact News: {recent_high.headline[:50]}... (cooling down)"
+        except Exception:
+            pass
+
         return False, None

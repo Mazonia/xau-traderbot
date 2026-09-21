@@ -20,6 +20,8 @@ from ai.price_predictor import PricePredictor
 from ai.signal_classifier import SignalClassifier
 from config.settings import get_settings, LOGS_DIR
 from core.mt5_connector import MT5Connector
+from core.scheduler import BotScheduler
+from news.economic_events import EconomicEventsManager
 from database import crud
 from database.models import init_database
 from execution.risk_manager import RiskManager
@@ -80,9 +82,11 @@ class TradingBot:
         self.price_predictor = PricePredictor()
         self.signal_classifier = SignalClassifier()
 
-        # ── News ─────────────────────────────────────────────────────────
+        # ── News & Macro ─────────────────────────────────────────────────
         self.news_fetcher = NewsFetcher()
         self.news_analyzer = NewsAnalyzer()
+        self.economic_events = EconomicEventsManager()
+        self.scheduler = BotScheduler()
 
         # ── Notifications ────────────────────────────────────────────────
         self.telegram = TelegramNotifier(bot_instance=self)
@@ -163,6 +167,22 @@ class TradingBot:
         # Start interactive 2-way Telegram polling in background
         await self.telegram.start_polling()
 
+        # Start background task scheduler (non-blocking news, economic calendar & daily report)
+        self.scheduler.add_news_job(
+            self._process_news,
+            interval_minutes=self.settings.news_params.get("check_interval_minutes", 15)
+        )
+        self.scheduler.add_economic_events_job(
+            self.economic_events.fetch_upcoming_events,
+            interval_hours=1
+        )
+        self.scheduler.add_daily_summary_job(
+            self._send_daily_summary_task,
+            hour=21,
+            minute=0
+        )
+        self.scheduler.start()
+
         # Register shutdown handlers
         self._running = True
 
@@ -181,6 +201,7 @@ class TradingBot:
         """Gracefully stop the bot."""
         logger.info("Shutting down...")
         self._running = False
+        self.scheduler.shutdown()
         await self.telegram.stop_polling()
         self.mt5.disconnect()
         logger.info("Bot stopped successfully")
@@ -226,9 +247,13 @@ class TradingBot:
                 # ── Step 4: Get AI predictions ───────────────────────────
                 ai_prediction = self.signal_classifier.predict(df_h1)
 
-                # ── Step 5: Check news (every N minutes) ─────────────────
+                # ── Step 5: Check economic events & news ─────────────────
+                imminent, ev_name = self.economic_events.is_high_impact_imminent()
+                if imminent and self._cycle_count % 10 == 0:
+                    logger.warning(f"⚠️ High-impact economic event: {ev_name} — new entries paused")
+
                 if self.news_fetcher.should_fetch():
-                    await self._process_news()
+                    asyncio.create_task(self._process_news())
 
                 sentiment = self.sentiment_aggregator.get_signal()
 
@@ -236,8 +261,8 @@ class TradingBot:
                 best_signal = None
                 best_confluence = None
 
-                # Skip strategy execution if paused via Telegram remote control
-                if getattr(self, "_trading_paused", False):
+                # Skip strategy execution if paused via Telegram or high-impact event imminent
+                if getattr(self, "_trading_paused", False) or imminent:
                     best_signal = None
                 else:
                     for strategy_name, strategy in self.strategies.items():
@@ -307,8 +332,10 @@ class TradingBot:
                 current_atr = float(df_h1["atr"].iloc[-1]) if df_h1 is not None and "atr" in df_h1.columns else 2.0
                 self.trailing_stop.update_all_positions(current_atr)
 
-                # ── Step 9: Sync positions ───────────────────────────────
-                self.trade_executor.sync_positions()
+                # ── Step 9: Sync positions & notify closes ───────────────
+                closed_trades = self.trade_executor.sync_positions()
+                for c_trade in closed_trades:
+                    await self.telegram.send_trade_closed(c_trade)
 
                 # ── Step 10: Performance snapshot (every 100 cycles) ─────
                 if self._cycle_count % 100 == 0:
@@ -410,3 +437,23 @@ class TradingBot:
 
         except Exception as e:
             logger.error(f"Performance snapshot error: {e}")
+
+
+    async def _send_daily_summary_task(self):
+        """Send end-of-day summary to Telegram."""
+        try:
+            account = self.mt5.get_account_info(auto_reconnect=False)
+            balance = account["balance"] if account else 0.0
+            daily_pnl = crud.get_daily_pnl()
+            stats = crud.get_trade_stats(days=1)
+            await self.telegram.send_daily_summary(
+                balance=balance,
+                daily_pnl=daily_pnl,
+                total_trades=stats.get("total_trades", 0),
+                winning=stats.get("winning_trades", 0),
+                losing=stats.get("losing_trades", 0),
+                win_rate=stats.get("win_rate", 0.0),
+            )
+            logger.info("Daily performance report sent to Telegram")
+        except Exception as e:
+            logger.error(f"Daily summary task error: {e}")
