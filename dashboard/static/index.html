@@ -264,22 +264,31 @@
                         </div>
                     </div>
 
-                    <!-- Quick Order Execution Panel -->
+                    <!-- Quick Order Execution & Scheduling Panel -->
                     <div class="glass-card execution-card">
                         <div class="card-header borderless">
                             <div class="header-left">
                                 <span class="section-badge amber">MT5 DIRECT</span>
-                                <h3 class="card-title-sm">Manual Quick Execution</h3>
+                                <h3 class="card-title-sm">Execution & Scheduling</h3>
+                            </div>
+                            <div class="order-mode-toggle">
+                                <button class="mode-pill active" id="mode-market-btn" onclick="setOrderMode('market')">⚡ Market</button>
+                                <button class="mode-pill" id="mode-pending-btn" onclick="setOrderMode('pending')">📌 Limit Order</button>
                             </div>
                         </div>
                         <div class="card-body">
                             <div class="order-inputs">
+                                <div class="input-field" id="target-price-group" style="display: none;">
+                                    <label for="order-target-price">Target Trigger Price ($)</label>
+                                    <input type="number" id="order-target-price" placeholder="e.g. 4325.00" step="0.50">
+                                </div>
                                 <div class="input-field">
                                     <label for="order-volume">Volume (Lots)</label>
                                     <div class="volume-control">
                                         <input type="number" id="order-volume" value="0.01" step="0.01" min="0.01" max="10.0">
                                         <div class="lot-presets">
                                             <button class="lot-pill" onclick="setLot(0.01)">0.01</button>
+                                            <button class="lot-pill" onclick="setLot(0.02)">0.02</button>
                                             <button class="lot-pill" onclick="setLot(0.05)">0.05</button>
                                             <button class="lot-pill" onclick="setLot(0.10)">0.10</button>
                                         </div>
@@ -288,22 +297,22 @@
                                 <div class="inputs-row">
                                     <div class="input-field">
                                         <label for="order-sl">Stop Loss (Pips)</label>
-                                        <input type="number" id="order-sl" placeholder="Optional" min="0" step="5">
+                                        <input type="number" id="order-sl" placeholder="e.g. 100" min="0" step="5">
                                     </div>
                                     <div class="input-field">
                                         <label for="order-tp">Take Profit (Pips)</label>
-                                        <input type="number" id="order-tp" placeholder="Optional" min="0" step="5">
+                                        <input type="number" id="order-tp" placeholder="e.g. 150" min="0" step="5">
                                     </div>
                                 </div>
                             </div>
 
                             <div class="order-actions-row">
-                                <button class="btn-trade btn-buy" id="btn-exec-buy" onclick="executeTrade('BUY')">
-                                    <span class="trade-dir">BUY</span>
+                                <button class="btn-trade btn-buy" id="btn-exec-buy" onclick="handleOrderSubmit('BUY')">
+                                    <span class="trade-dir" id="buy-label">BUY</span>
                                     <span class="trade-hint" id="buy-ask-hint">ASK: —</span>
                                 </button>
-                                <button class="btn-trade btn-sell" id="btn-exec-sell" onclick="executeTrade('SELL')">
-                                    <span class="trade-dir">SELL</span>
+                                <button class="btn-trade btn-sell" id="btn-exec-sell" onclick="handleOrderSubmit('SELL')">
+                                    <span class="trade-dir" id="sell-label">SELL</span>
                                     <span class="trade-hint" id="sell-bid-hint">BID: —</span>
                                 </button>
                             </div>
@@ -316,25 +325,32 @@
             <!-- ── Lower Stage: Positions, Trades & News Feed ───────── -->
             <section class="bottom-stage-grid">
                 
-                <!-- Open Positions Panel -->
+                <!-- Open Positions & Scheduled Orders Panel -->
                 <div class="glass-card positions-station">
                     <div class="card-header">
                         <div class="header-left">
                             <span class="section-badge green">LIVE EXPOSURE</span>
-                            <h2 class="card-title-sm">Active Positions</h2>
+                            <h2 class="card-title-sm">Active Positions & Orders</h2>
                             <span class="counter-badge" id="open-positions-count">0</span>
+                            <span class="counter-badge amber-badge" id="pending-orders-count">0 Scheduled</span>
                         </div>
-                        <button class="btn-outline-sm btn-danger" onclick="openCloseAllModal()">Close All</button>
+                        <div class="header-actions">
+                            <button class="btn-outline-sm btn-danger" onclick="openCloseAllModal()">Emergency Close All</button>
+                        </div>
                     </div>
                     <div class="card-body scrollable-table">
+                        <!-- Live Market Positions Table -->
+                        <div class="sub-table-header">
+                            <span class="sub-table-title">🟢 Open Market Positions</span>
+                        </div>
                         <table class="station-table" id="positions-table">
                             <thead>
                                 <tr>
                                     <th>Ticket</th>
                                     <th>Type</th>
                                     <th>Lots</th>
-                                    <th>Open Price</th>
-                                    <th>Current</th>
+                                    <th>Entry Price</th>
+                                    <th>Current Price</th>
                                     <th>SL</th>
                                     <th>TP</th>
                                     <th>P&L ($)</th>
@@ -342,7 +358,29 @@
                                 </tr>
                             </thead>
                             <tbody id="positions-body">
-                                <tr><td colspan="9" class="empty-state">No open positions. Ready for signals.</td></tr>
+                                <tr><td colspan="9" class="empty-state">No open positions. Scanning market regimes...</td></tr>
+                            </tbody>
+                        </table>
+
+                        <!-- Scheduled Pending Orders Table -->
+                        <div class="sub-table-header mt-4">
+                            <span class="sub-table-title">⏳ Scheduled Pending Orders</span>
+                        </div>
+                        <table class="station-table" id="pending-table">
+                            <thead>
+                                <tr>
+                                    <th>Order #</th>
+                                    <th>Type</th>
+                                    <th>Lots</th>
+                                    <th>Trigger Price</th>
+                                    <th>SL</th>
+                                    <th>TP</th>
+                                    <th>Comment</th>
+                                    <th>Action</th>
+                                </tr>
+                            </thead>
+                            <tbody id="pending-body">
+                                <tr><td colspan="8" class="empty-state">No scheduled pending orders in book.</td></tr>
                             </tbody>
                         </table>
                     </div>

@@ -252,53 +252,190 @@ async function refreshAccount() {
 }
 
 // ── Positions Station ───────────────────────────────────────────────────
-async function refreshPositions() {
-    const data = await fetchJSON('/api/positions');
-    if (!data) return;
+let currentOrderMode = 'market';
 
-    const countBadge = document.getElementById('open-positions-count');
-    const statusSub = document.getElementById('floating-status');
-    const tbody = document.getElementById('positions-body');
+function setOrderMode(mode) {
+    currentOrderMode = mode;
+    const marketBtn = document.getElementById('mode-market-btn');
+    const pendingBtn = document.getElementById('mode-pending-btn');
+    const targetGroup = document.getElementById('target-price-group');
+    const buyLabel = document.getElementById('buy-label');
+    const sellLabel = document.getElementById('sell-label');
 
-    const count = data.length || 0;
-    if (countBadge) countBadge.textContent = count;
-    if (statusSub) statusSub.textContent = `${count} Open Position${count === 1 ? '' : 's'}`;
+    if (mode === 'market') {
+        if (marketBtn) marketBtn.classList.add('active');
+        if (pendingBtn) pendingBtn.classList.remove('active');
+        if (targetGroup) targetGroup.style.display = 'none';
+        if (buyLabel) buyLabel.textContent = 'BUY';
+        if (sellLabel) sellLabel.textContent = 'SELL';
+    } else {
+        if (marketBtn) marketBtn.classList.remove('active');
+        if (pendingBtn) pendingBtn.classList.add('active');
+        if (targetGroup) targetGroup.style.display = 'block';
+        if (buyLabel) buyLabel.textContent = 'BUY LIMIT';
+        if (sellLabel) sellLabel.textContent = 'SELL LIMIT';
 
-    if (!tbody) return;
+        // Suggest target price if empty
+        const targetInput = document.getElementById('order-target-price');
+        if (targetInput && !targetInput.value) {
+            const curP = parseFloat(document.getElementById('current-price')?.textContent?.replace(/[^0-9.]/g, '') || '0');
+            if (curP > 0) targetInput.value = (curP - 15.0).toFixed(2);
+        }
+    }
+}
 
-    if (count === 0) {
-        tbody.innerHTML = '<tr><td colspan="9" class="empty-state">No open positions. Ready for signals.</td></tr>';
+async function handleOrderSubmit(direction) {
+    if (currentOrderMode === 'pending') {
+        const action = direction === 'BUY' ? 'BUY_LIMIT' : 'SELL_LIMIT';
+        await executePendingOrder(action);
+    } else {
+        await executeTrade(direction);
+    }
+}
+
+async function executePendingOrder(action) {
+    const volumeInput = document.getElementById('order-volume');
+    const targetInput = document.getElementById('order-target-price');
+    const slInput = document.getElementById('order-sl');
+    const tpInput = document.getElementById('order-tp');
+
+    const volume = parseFloat(volumeInput?.value || '0.01');
+    const target_price = parseFloat(targetInput?.value || '0');
+    const sl_pips = slInput?.value ? parseFloat(slInput.value) : null;
+    const tp_pips = tpInput?.value ? parseFloat(tpInput.value) : null;
+
+    if (isNaN(volume) || volume <= 0) {
+        showToast('Invalid volume lot size', 'error');
+        return;
+    }
+    if (isNaN(target_price) || target_price <= 0) {
+        showToast('Please specify a valid Target Trigger Price ($)', 'error');
         return;
     }
 
-    tbody.innerHTML = data.map(pos => {
-        const typeClass = (pos.type || '').toLowerCase();
-        const profit = pos.profit || 0;
-        const profitClass = profit >= 0 ? 'profit' : 'loss';
-        const priceOpen = pos.price_open ? pos.price_open.toFixed(2) : '—';
-        const priceCurrent = pos.price_current ? pos.price_current.toFixed(2) : '—';
-        const sl = pos.sl ? pos.sl.toFixed(2) : '—';
-        const tp = pos.tp ? pos.tp.toFixed(2) : '—';
-
-        return `
-            <tr>
-                <td>#${pos.ticket}</td>
-                <td><span class="type-pill ${typeClass}">${pos.type}</span></td>
-                <td>${pos.volume?.toFixed(2)}</td>
-                <td>$${priceOpen}</td>
-                <td>$${priceCurrent}</td>
-                <td>${sl}</td>
-                <td>${tp}</td>
-                <td class="pnl-cell ${profitClass}">${formatCurrency(profit, true)}</td>
-                <td>
-                    <button class="btn-close-single" onclick="closePosition(${pos.ticket})">✕ Close</button>
-                </td>
-            </tr>
-        `;
-    }).join('');
+    showToast(`Scheduling ${action} order (${volume} lots @ $${target_price.toFixed(2)})...`);
+    try {
+        const res = await fetch('/api/order', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action, volume, target_price, sl_pips, tp_pips })
+        });
+        const data = await res.json();
+        if (data.success) {
+            showToast(`Scheduled Order #${data.ticket} successfully placed at $${data.price.toFixed(2)}!`, 'success');
+            refreshPositions();
+        } else {
+            showToast(`Order failed: ${data.error}`, 'error');
+        }
+    } catch (e) {
+        showToast(`Scheduling error: ${e}`, 'error');
+    }
 }
 
-// ── Trade History ───────────────────────────────────────────────────────
+async function cancelOrder(ticket) {
+    showToast(`Canceling pending order #${ticket}...`);
+    try {
+        const res = await fetch(`/api/cancel-order/${ticket}`, { method: 'POST' });
+        const data = await res.json();
+        if (data.success) {
+            showToast(`Order #${ticket} canceled successfully!`, 'success');
+            refreshPositions();
+        } else {
+            showToast(`Failed to cancel: ${data.error}`, 'error');
+        }
+    } catch (e) {
+        showToast(`Cancel error: ${e}`, 'error');
+    }
+}
+
+async function refreshPositions() {
+    const [positionsData, pendingData] = await Promise.all([
+        fetchJSON('/api/positions'),
+        fetchJSON('/api/pending')
+    ]);
+
+    const countBadge = document.getElementById('open-positions-count');
+    const pendingBadge = document.getElementById('pending-orders-count');
+    const statusSub = document.getElementById('floating-status');
+    const posTbody = document.getElementById('positions-body');
+    const pendingTbody = document.getElementById('pending-body');
+
+    // 1. Render Active Positions
+    const posList = Array.isArray(positionsData) ? positionsData : (positionsData?.positions || []);
+    const posCount = posList.length;
+    if (countBadge) countBadge.textContent = posCount;
+    if (statusSub) statusSub.textContent = `${posCount} Open Position${posCount === 1 ? '' : 's'}`;
+
+    if (posTbody) {
+        if (posCount === 0) {
+            posTbody.innerHTML = '<tr><td colspan="9" class="empty-state">No open positions. Scanning market regimes...</td></tr>';
+        } else {
+            posTbody.innerHTML = posList.map(pos => {
+                const typeClass = (pos.type || '').toLowerCase();
+                const profit = pos.profit || 0;
+                const profitClass = profit >= 0 ? 'profit' : 'loss';
+                const priceOpen = pos.price_open ? pos.price_open.toFixed(2) : '—';
+                const priceCurrent = pos.price_current ? pos.price_current.toFixed(2) : '—';
+                const sl = pos.sl ? pos.sl.toFixed(2) : '—';
+                const tp = pos.tp ? pos.tp.toFixed(2) : '—';
+
+                return `
+                    <tr>
+                        <td><strong>#${pos.ticket}</strong></td>
+                        <td><span class="type-pill ${typeClass}">${pos.type}</span></td>
+                        <td>${pos.volume?.toFixed(2)}</td>
+                        <td>$${priceOpen}</td>
+                        <td>$${priceCurrent}</td>
+                        <td>${sl}</td>
+                        <td>${tp}</td>
+                        <td class="pnl-cell ${profitClass}"><strong>${formatCurrency(profit, true)}</strong></td>
+                        <td>
+                            <button class="btn-close-sm" onclick="closePosition(${pos.ticket})" title="Market Close Position">Close</button>
+                        </td>
+                    </tr>
+                `;
+            }).join('');
+        }
+    }
+
+    // 2. Render Scheduled Pending Orders
+    const pendList = Array.isArray(pendingData) ? pendingData : [];
+    const pendCount = pendList.length;
+    if (pendingBadge) {
+        pendingBadge.textContent = `${pendCount} Scheduled`;
+        pendingBadge.style.display = pendCount > 0 ? 'inline-block' : 'none';
+    }
+
+    if (pendingTbody) {
+        if (pendCount === 0) {
+            pendingTbody.innerHTML = '<tr><td colspan="8" class="empty-state">No scheduled pending orders in book.</td></tr>';
+        } else {
+            pendingTbody.innerHTML = pendList.map(o => {
+                const typeClass = (o.type || '').toLowerCase();
+                const targetP = o.price ? o.price.toFixed(2) : '—';
+                const sl = o.sl ? o.sl.toFixed(2) : '—';
+                const tp = o.tp ? o.tp.toFixed(2) : '—';
+                const cmt = o.comment || 'Scheduled';
+
+                return `
+                    <tr>
+                        <td><strong>#${o.ticket}</strong></td>
+                        <td><span class="type-pill ${typeClass}">${o.type}</span></td>
+                        <td>${o.volume?.toFixed(2)}</td>
+                        <td><strong>$${targetP}</strong></td>
+                        <td>${sl}</td>
+                        <td>${tp}</td>
+                        <td><span class="comment-text">${cmt}</span></td>
+                        <td>
+                            <button class="btn-cancel-sm" onclick="cancelOrder(${o.ticket})" title="Cancel Scheduled Order">Cancel</button>
+                        </td>
+                    </tr>
+                `;
+            }).join('');
+        }
+    }
+}
+
 async function refreshTrades() {
     const data = await fetchJSON('/api/trades');
     if (!data) return;

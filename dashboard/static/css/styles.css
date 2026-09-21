@@ -1315,3 +1315,148 @@ body.dark-theme {
     line-height: 1.4;
     font-style: italic;
 }
+
+/* ── Modern Order Mode Toggle & Scheduling UI ───────────────────────────── */
+.order-mode-toggle {
+    display: flex;
+    gap: 6px;
+    background: rgba(15, 23, 42, 0.8);
+    padding: 3px;
+    border-radius: 8px;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.mode-pill {
+    background: transparent;
+    border: none;
+    color: #94a3b8;
+    font-size: 0.72rem;
+    font-weight: 600;
+    padding: 4px 10px;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all 180ms cubic-bezier(0.16, 1, 0.3, 1);
+    white-space: nowrap;
+}
+
+.mode-pill:hover {
+    color: #f8fafc;
+    background: rgba(255, 255, 255, 0.05);
+}
+
+.mode-pill.active {
+    background: linear-gradient(135deg, #3b82f6, #1d4ed8);
+    color: #ffffff;
+    box-shadow: 0 2px 8px rgba(59, 130, 246, 0.35);
+}
+
+.sub-table-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 12px;
+    background: rgba(15, 23, 42, 0.5);
+    border-radius: 6px;
+    margin-bottom: 6px;
+    border: 1px solid rgba(255, 255, 255, 0.04);
+}
+
+.sub-table-title {
+    font-size: 0.75rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: #cbd5e1;
+}
+
+.mt-4 {
+    margin-top: 16px;
+}
+
+.amber-badge {
+    background: rgba(245, 158, 11, 0.15) !important;
+    color: #fbbf24 !important;
+    border: 1px solid rgba(245, 158, 11, 0.3) !important;
+}
+
+.btn-cancel-sm {
+    background: rgba(239, 68, 68, 0.12);
+    border: 1px solid rgba(239, 68, 68, 0.3);
+    color: #fca5a5;
+    padding: 3px 8px;
+    border-radius: 4px;
+    font-size: 0.72rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 150ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.btn-cancel-sm:hover {
+    background: rgba(239, 68, 68, 0.25);
+    color: #ffffff;
+    transform: scale(1.04) translateY(-1px);
+    box-shadow: 0 2px 8px rgba(239, 68, 68, 0.3);
+}
+
+.btn-cancel-sm:active {
+    transform: scale(0.97);
+}
+
+.btn-close-sm {
+    background: rgba(244, 63, 94, 0.15);
+    border: 1px solid rgba(244, 63, 94, 0.35);
+    color: #fda4af;
+    padding: 3px 8px;
+    border-radius: 4px;
+    font-size: 0.72rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 150ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.btn-close-sm:hover {
+    background: #e11d48;
+    color: #ffffff;
+    transform: scale(1.04) translateY(-1px);
+    box-shadow: 0 2px 10px rgba(225, 29, 72, 0.4);
+}
+
+.btn-close-sm:active {
+    transform: scale(0.97);
+}
+
+/* ── Emil Kowalski Spring Motion Enhancements ───────────────────────────── */
+.kpi-card {
+    transition: transform 220ms cubic-bezier(0.16, 1, 0.3, 1), box-shadow 220ms cubic-bezier(0.16, 1, 0.3, 1), border-color 220ms ease !important;
+}
+
+.kpi-card:hover {
+    transform: translateY(-3px) scale(1.01) !important;
+    border-color: rgba(255, 255, 255, 0.18) !important;
+    box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.5), 0 0 15px rgba(59, 130, 246, 0.15) !important;
+}
+
+.btn-trade {
+    transition: transform 150ms cubic-bezier(0.16, 1, 0.3, 1), box-shadow 150ms cubic-bezier(0.16, 1, 0.3, 1), filter 150ms ease !important;
+}
+
+.btn-trade:hover {
+    transform: translateY(-2px) scale(1.02) !important;
+    filter: brightness(1.1);
+}
+
+.btn-trade:active {
+    transform: scale(0.97) !important;
+}
+
+.action-btn {
+    transition: transform 150ms cubic-bezier(0.16, 1, 0.3, 1), box-shadow 150ms cubic-bezier(0.16, 1, 0.3, 1) !important;
+}
+
+.action-btn:hover {
+    transform: scale(1.03) translateY(-1px) !important;
+}
+
+.action-btn:active {
+    transform: scale(0.96) !important;
+}

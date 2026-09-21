@@ -176,6 +176,7 @@ async def get_recent_news():
 class OrderRequest(BaseModel):
     action: str
     volume: float
+    target_price: Optional[float] = None
     sl_pips: Optional[float] = None
     tp_pips: Optional[float] = None
 
@@ -281,39 +282,92 @@ async def close_all_positions():
         return JSONResponse({"success": False, "error": str(e)}, status_code=500)
 
 
+@app.get("/api/pending")
+async def get_pending_orders():
+    """Get active scheduled pending orders from MT5."""
+    try:
+        from core.mt5_connector import MT5Connector
+        mt5 = MT5Connector()
+        if mt5.connect(max_retries=1, retry_delay=0.1):
+            pending = mt5.get_pending_orders(auto_reconnect=False)
+            for p in pending:
+                if "time" in p and hasattr(p["time"], "isoformat"):
+                    p["time"] = p["time"].isoformat()
+            return JSONResponse(pending)
+        return JSONResponse([])
+    except Exception as e:
+        logger.error(f"Error fetching pending orders: {e}")
+        return JSONResponse([])
+
+
+@app.post("/api/cancel-order/{ticket}")
+async def cancel_pending_order(ticket: int):
+    """Cancel a scheduled pending order by ticket."""
+    try:
+        from core.mt5_connector import MT5Connector
+        mt5 = MT5Connector()
+        if mt5.connect(max_retries=1, retry_delay=0.1):
+            success = mt5.cancel_order(ticket)
+            return JSONResponse({"success": success, "ticket": ticket})
+        return JSONResponse({"success": False, "error": "MT5 offline"}, status_code=500)
+    except Exception as e:
+        logger.error(f"Error canceling order {ticket}: {e}")
+        return JSONResponse({"success": False, "error": str(e)}, status_code=500)
+
+
 @app.post("/api/order")
 async def place_manual_order(req: OrderRequest):
-    """Place a manual market order from the dashboard."""
+    """Place a manual market or scheduled pending order from the dashboard."""
     try:
         from core.mt5_connector import MT5Connector
         mt5 = MT5Connector()
         if mt5.connect(max_retries=1, retry_delay=0.1):
             symbol = "XAUUSD"
-            tick = mt5.get_current_price(symbol)
+            tick = mt5.get_current_tick(symbol)
             if not tick:
-                return JSONResponse({"success": False, "error": "Could not fetch XAUUSD price"}, status_code=400)
+                return JSONResponse({"success": False, "error": "Could not fetch live XAUUSD tick"}, status_code=400)
 
-            price = tick["ask"] if req.action.upper() == "BUY" else tick["bid"]
+            act = req.action.upper()
+            vol = max(0.01, round(req.volume, 2))
             pip = 0.10
-            sl = None
-            tp = None
-            if req.sl_pips:
-                sl = price - (req.sl_pips * pip) if req.action.upper() == "BUY" else price + (req.sl_pips * pip)
-            if req.tp_pips:
-                tp = price + (req.tp_pips * pip) if req.action.upper() == "BUY" else price - (req.tp_pips * pip)
 
-            order_type = "BUY" if req.action.upper() == "BUY" else "SELL"
-            res = mt5.open_position(
-                symbol=symbol,
-                order_type=order_type,
-                volume=max(0.01, round(req.volume, 2)),
-                sl=sl,
-                tp=tp,
-                comment="Dashboard Order"
-            )
-            if res:
-                return JSONResponse({"success": True, "ticket": res.get("ticket"), "price": price})
-            return JSONResponse({"success": False, "error": "MT5 order execution failed"}, status_code=400)
+            if act in ["BUY", "SELL"]:
+                price = tick["ask"] if act == "BUY" else tick["bid"]
+                sl = (price - req.sl_pips * pip) if (req.sl_pips and act == "BUY") else ((price + req.sl_pips * pip) if req.sl_pips else 0.0)
+                tp = (price + req.tp_pips * pip) if (req.tp_pips and act == "BUY") else ((price - req.tp_pips * pip) if req.tp_pips else 0.0)
+                res = mt5.send_market_order(
+                    order_type=act,
+                    symbol=symbol,
+                    volume=vol,
+                    sl=sl,
+                    tp=tp,
+                    comment="DASHBOARD_MANUAL"
+                )
+                if res and (res.get("deal", 0) > 0 or res.get("order", 0) > 0):
+                    return JSONResponse({"success": True, "ticket": res.get("order"), "deal": res.get("deal"), "price": res.get("price", price)})
+                err = res.get("comment", "Order rejected by broker") if res else "Order dispatch failed"
+                return JSONResponse({"success": False, "error": err}, status_code=400)
+
+            elif act in ["BUY_LIMIT", "SELL_LIMIT", "BUY_STOP", "SELL_STOP"]:
+                target_p = req.target_price if (req.target_price and req.target_price > 0) else (tick["bid"] if "BUY" in act else tick["ask"])
+                sl = (target_p - req.sl_pips * pip) if (req.sl_pips and "BUY" in act) else ((target_p + req.sl_pips * pip) if req.sl_pips else 0.0)
+                tp = (target_p + req.tp_pips * pip) if (req.tp_pips and "BUY" in act) else ((target_p - req.tp_pips * pip) if req.tp_pips else 0.0)
+                res = mt5.send_pending_order(
+                    order_type=act,
+                    price=target_p,
+                    symbol=symbol,
+                    volume=vol,
+                    sl=sl,
+                    tp=tp,
+                    comment="DASHBOARD_PENDING"
+                )
+                if res and res.get("order", 0) > 0:
+                    return JSONResponse({"success": True, "ticket": res.get("order"), "price": target_p})
+                err = res.get("comment", "Pending order rejected by broker") if res else "Pending order failed"
+                return JSONResponse({"success": False, "error": err}, status_code=400)
+
+            return JSONResponse({"success": False, "error": f"Unsupported action {act}"}, status_code=400)
+
         return JSONResponse({"success": False, "error": "MT5 offline"}, status_code=500)
     except Exception as e:
         logger.error(f"Manual order placement error: {e}")
