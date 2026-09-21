@@ -260,6 +260,9 @@ class MT5Connector:
 
         symbol = symbol or self.settings.symbol
         tick = mt5.symbol_info_tick(symbol)
+        if tick is None or getattr(tick, 'bid', 0.0) == 0.0:
+            mt5.symbol_select(symbol, True)
+            tick = mt5.symbol_info_tick(symbol)
 
         if tick is None:
             logger.error(f"Failed to get tick for {symbol}")
@@ -448,6 +451,9 @@ class MT5Connector:
 
         symbol = symbol or self.settings.symbol
         tick = mt5.symbol_info_tick(symbol)
+        if tick is None or getattr(tick, 'bid', 0.0) == 0.0:
+            mt5.symbol_select(symbol, True)
+            tick = mt5.symbol_info_tick(symbol)
 
         if tick is None:
             logger.error(f"Cannot get price for {symbol}")
@@ -507,6 +513,101 @@ class MT5Connector:
         return result_dict
 
     @synchronized
+    @synchronized
+    def send_pending_order(
+        self,
+        order_type: str,
+        price: float,
+        symbol: str | None = None,
+        volume: float = 0.01,
+        sl: float = 0.0,
+        tp: float = 0.0,
+        comment: str = "XAUUSD_AI_PENDING",
+        magic: int = 123456,
+    ) -> dict | None:
+        """
+        Send a pending order (BUY_LIMIT, SELL_LIMIT, BUY_STOP, SELL_STOP).
+
+        Args:
+            order_type: "BUY_LIMIT", "SELL_LIMIT", "BUY_STOP", "SELL_STOP"
+            price: Order execution trigger price
+            symbol: Trading symbol (defaults to settings.symbol)
+            volume: Lot size
+            sl: Stop loss price
+            tp: Take profit price
+            comment: Order comment
+            magic: Magic number
+
+        Returns:
+            Order result dict or None on failure
+        """
+        if not self.ensure_connected():
+            return None
+
+        symbol = symbol or self.settings.symbol
+        type_map = {
+            "BUY_LIMIT": mt5.ORDER_TYPE_BUY_LIMIT,
+            "SELL_LIMIT": mt5.ORDER_TYPE_SELL_LIMIT,
+            "BUY_STOP": mt5.ORDER_TYPE_BUY_STOP,
+            "SELL_STOP": mt5.ORDER_TYPE_SELL_STOP,
+        }
+        mt5_type = type_map.get(order_type.upper())
+        if mt5_type is None:
+            logger.error(f"Invalid pending order type: {order_type}")
+            return None
+
+        request = {
+            "action": mt5.TRADE_ACTION_PENDING,
+            "symbol": symbol,
+            "volume": volume,
+            "type": mt5_type,
+            "price": round(price, 2),
+            "sl": round(sl, 2) if sl else 0.0,
+            "tp": round(tp, 2) if tp else 0.0,
+            "deviation": 30,
+            "magic": magic,
+            "comment": comment,
+            "type_time": mt5.ORDER_TIME_GTC,
+            "type_filling": self._get_filling_mode(symbol),
+        }
+
+        result = mt5.order_send(request)
+        if result is None:
+            logger.error(f"Pending order send returned None: {mt5.last_error()}")
+            return None
+
+        res_dict = {
+            "retcode": result.retcode,
+            "order": result.order,
+            "price": result.price,
+            "volume": result.volume,
+            "comment": result.comment,
+        }
+
+        if result.retcode != mt5.TRADE_RETCODE_DONE:
+            logger.error(f"❌ Pending order failed: {result.retcode} — {result.comment}")
+            return res_dict
+
+        logger.success(f"📌 {order_type} {volume} lots {symbol} @ {price:.2f} | SL: {sl:.2f} | TP: {tp:.2f} | Order #{result.order}")
+        return res_dict
+
+    @synchronized
+    def cancel_order(self, order_ticket: int) -> bool:
+        """Cancel a pending order by ticket number."""
+        if not self.ensure_connected():
+            return False
+
+        request = {
+            "action": mt5.TRADE_ACTION_REMOVE,
+            "order": order_ticket,
+        }
+        result = mt5.order_send(request)
+        if result and result.retcode == mt5.TRADE_RETCODE_DONE:
+            logger.success(f"🗑️ Pending order #{order_ticket} canceled successfully")
+            return True
+        logger.error(f"Failed to cancel order #{order_ticket}: {result.comment if result else mt5.last_error()}")
+        return False
+
     def modify_position(
         self,
         ticket: int,

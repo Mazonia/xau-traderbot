@@ -26,6 +26,11 @@ def parse_args():
         help="Train AI models before starting the bot",
     )
     parser.add_argument(
+        "--train-only",
+        action="store_true",
+        help="Train AI models and exit without starting the bot",
+    )
+    parser.add_argument(
         "--backtest",
         action="store_true",
         help="Run backtesting only (no live trading)",
@@ -65,26 +70,20 @@ async def train_models():
         return
 
     try:
-        # Fetch 6 months of H1 data for training
-        df = mt5.get_rates(timeframe="H1", count=5000)
+        from scripts.train_ai import run_training_pipeline
+        run_training_pipeline(timeframe="M15", count=3000)
 
-        if df is None or len(df) < 1000:
-            logger.error("Insufficient historical data for training")
-            return
+        # Optional LSTM if TensorFlow is installed
+        try:
+            import tensorflow
+            df = mt5.get_rates(timeframe="H1", count=2000)
+            if df is not None:
+                lstm = PricePredictor()
+                lstm.train(df, epochs=10)
+        except Exception:
+            pass
 
-        logger.info(f"Training data: {len(df)} H1 candles")
-
-        # Train LSTM
-        lstm = PricePredictor()
-        lstm_result = lstm.train(df, epochs=50)
-        logger.info(f"LSTM result: {lstm_result}")
-
-        # Train XGBoost
-        xgb = SignalClassifier()
-        xgb_result = xgb.train(df)
-        logger.info(f"XGBoost result: {xgb_result}")
-
-        logger.success("✅ AI models trained successfully")
+        logger.success("✅ AI models trained and ready for live execution")
 
     finally:
         mt5.disconnect()
@@ -179,6 +178,10 @@ def main():
 
     if args.backtest:
         run_backtest()
+        return
+
+    if args.train_only:
+        asyncio.run(train_models())
         return
 
     if args.train:

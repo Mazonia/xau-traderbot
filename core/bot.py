@@ -183,6 +183,10 @@ class TradingBot:
             hour=21,
             minute=0
         )
+        self.scheduler.add_model_retrain_job(
+            self._retrain_model_task,
+            interval_hours=12
+        )
         self.scheduler.start()
 
         # Register shutdown handlers
@@ -378,6 +382,17 @@ class TradingBot:
             except Exception as e:
                 logger.error(f"Error in main loop cycle #{self._cycle_count}: {e}")
                 await asyncio.sleep(loop_interval)
+
+    async def _retrain_model_task(self):
+        """Asynchronous background task to retrain XGBoost model on latest market candles."""
+        try:
+            from scripts.train_ai import run_training_pipeline
+            logger.info("🧠 Scheduled periodic AI model retraining started...")
+            await asyncio.to_thread(run_training_pipeline, "M15", 3000)
+            self.signal_classifier.load_model()
+            logger.success("✅ Scheduled AI model retraining completed & reloaded")
+        except Exception as e:
+            logger.error(f"Error during scheduled model retraining: {e}")
 
     async def _process_news(self):
         """Fetch and analyze news."""

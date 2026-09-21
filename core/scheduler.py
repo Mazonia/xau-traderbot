@@ -70,3 +70,14 @@ class BotScheduler:
             replace_existing=True,
         )
         logger.info(f"Scheduled economic calendar refresh every {interval_hours} hour(s)")
+
+    def add_model_retrain_job(self, func: Callable, interval_hours: int = 12):
+        """Schedule periodic AI model retraining on fresh market data."""
+        self.scheduler.add_job(
+            func,
+            trigger=IntervalTrigger(hours=interval_hours),
+            id="model_retrain",
+            name="Periodic AI Model Retraining",
+            replace_existing=True,
+        )
+        logger.info(f"Scheduled AI model retraining every {interval_hours} hours")

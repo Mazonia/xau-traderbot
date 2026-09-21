@@ -214,9 +214,15 @@ class TelegramNotifier:
         account = None
         if self.bot_instance and hasattr(self.bot_instance, "mt5"):
             mt5_obj = self.bot_instance.mt5
-            is_conn = mt5_obj.is_connected() if callable(getattr(mt5_obj, "is_connected", None)) else getattr(mt5_obj, "is_connected", False)
-            if is_conn:
-                account = mt5_obj.get_account_info(auto_reconnect=False)
+        else:
+            from core.mt5_connector import MT5Connector
+            mt5_obj = MT5Connector()
+
+        is_conn = mt5_obj.is_connected() if callable(getattr(mt5_obj, "is_connected", None)) else getattr(mt5_obj, "is_connected", False)
+        if not is_conn and hasattr(mt5_obj, "connect"):
+            is_conn = mt5_obj.connect(max_retries=1, retry_delay=0.1)
+        if is_conn:
+            account = mt5_obj.get_account_info(auto_reconnect=False)
 
         paused = getattr(self.bot_instance, "_trading_paused", False)
         state_str = "⏸️ PAUSED" if paused else "🟢 RUNNING"
@@ -263,14 +269,21 @@ class TelegramNotifier:
             return
 
         positions = []
+        pending = []
         is_conn = False
         if self.bot_instance and hasattr(self.bot_instance, "mt5"):
             mt5_obj = self.bot_instance.mt5
-            is_conn = mt5_obj.is_connected() if callable(getattr(mt5_obj, "is_connected", None)) else getattr(mt5_obj, "is_connected", False)
-            if not is_conn and hasattr(mt5_obj, "connect"):
-                is_conn = mt5_obj.connect(max_retries=1, retry_delay=0.1)
-            if is_conn:
-                positions = mt5_obj.get_open_positions(self.settings.symbol, auto_reconnect=False)
+        else:
+            from core.mt5_connector import MT5Connector
+            mt5_obj = MT5Connector()
+
+        is_conn = mt5_obj.is_connected() if callable(getattr(mt5_obj, "is_connected", None)) else getattr(mt5_obj, "is_connected", False)
+        if not is_conn and hasattr(mt5_obj, "connect"):
+            is_conn = mt5_obj.connect(max_retries=1, retry_delay=0.1)
+        if is_conn:
+            positions = mt5_obj.get_open_positions(self.settings.symbol, auto_reconnect=False)
+            if hasattr(mt5_obj, "get_pending_orders"):
+                pending = mt5_obj.get_pending_orders(self.settings.symbol, auto_reconnect=False)
 
         keyboard_rows = []
 
@@ -281,11 +294,11 @@ class TelegramNotifier:
                 f"⚠️ <i>MT5 Terminal is currently Offline.</i>\n\n"
                 f"Cannot query live positions. Please ensure MetaTrader 5 is launched on your desktop with your Exness account logged in."
             )
-        elif not positions:
+        elif not positions and not pending:
             msg = (
-                f"📈 <b>OPEN POSITIONS</b>\n"
+                f"📈 <b>OPEN POSITIONS & ORDERS</b>\n"
                 f"{'━' * 25}\n\n"
-                f"<i>No open positions currently active on {self.settings.symbol}.</i>\n"
+                f"<i>No open positions or pending orders active on {self.settings.symbol}.</i>\n"
                 f"The bot is scanning market regimes and waiting for high-confluence entry signals."
             )
         else:
@@ -294,8 +307,8 @@ class TelegramNotifier:
                 ticket = pos.get("ticket")
                 direction = pos.get("type", "BUY")
                 volume = pos.get("volume", 0.0)
-                entry = pos.get("open_price", 0.0)
-                current = pos.get("current_price", 0.0)
+                entry = pos.get("price_open", pos.get("open_price", 0.0))
+                current = pos.get("price_current", pos.get("current_price", 0.0))
                 profit = pos.get("profit", 0.0)
                 p_emoji = "🟢" if profit >= 0 else "🔴"
                 dir_emoji = "📈" if direction == "BUY" else "📉"
