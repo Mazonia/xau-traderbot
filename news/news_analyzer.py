@@ -57,6 +57,59 @@ class NewsAnalyzer:
                 return None
         return self._gemini_client
 
+    def _analyze_with_lexicon(self, text: str) -> dict:
+        """
+        Fast, robust domain-specific financial sentiment analysis for Gold (XAUUSD).
+        Used when FinBERT is not installed or as a fallback.
+        """
+        t = text.lower()
+        
+        # Bullish factors for Gold (Rate cuts, inflation, safe haven, dollar weakness, turmoil)
+        bullish_keywords = [
+            "rate cut", "cut rate", "cuts rate", "cutting rate", "fed cut", "dovish", "easing",
+            "inflation", "cpi", "safe haven", "safe-haven", "gold surge", "gold rally", "gold climb", "gold jump",
+            "gold advance", "gold gain", "weak dollar", "dollar slide", "dollar fall", "dollar drop", "dollar sink",
+            "dollar weak", "dollar soft", "war", "conflict", "geopolitical", "crisis", "tension", "escalat", "strike", "attack",
+            "recession", "slowdown", "debt", "deficit", "bank failure", "tariff", "trade war",
+            "stimulus", "liquidity", "central bank", "reserve"
+        ]
+        
+        # Bearish factors for Gold (Rate hikes, hawkish, strong dollar, peace, high yields)
+        bearish_keywords = [
+            "rate hike", "hike rate", "hikes rate", "hiking rate", "fed hike", "hawkish", "tighten", "higher for longer",
+            "disinflation", "strong dollar", "dollar surge", "dollar rally", "dollar jump", "dollar gain", "dollar strong",
+            "gold drop", "gold fall", "gold tumble", "gold slide", "gold retreat", "gold sink",
+            "ceasefire", "peace", "de-escalat", "diplomacy", "strong job", "nfp beat", "robust job",
+            "yield surge", "yields rise", "yields jump"
+        ]
+        
+        bull_matches = [kw for kw in bullish_keywords if kw in t]
+        bear_matches = [kw for kw in bearish_keywords if kw in t]
+        
+        bull_score = len(bull_matches)
+        bear_score = len(bear_matches)
+        
+        total = bull_score + bear_score
+        if total == 0:
+            return {"sentiment": "NEUTRAL", "score": 0.0, "confidence": 0.4, "factors": []}
+            
+        raw_score = (bull_score - bear_score) / max(1, total)
+        clamped_score = max(-1.0, min(1.0, raw_score * 0.75))
+        
+        if clamped_score > 0.15:
+            sentiment = "BULLISH"
+        elif clamped_score < -0.15:
+            sentiment = "BEARISH"
+        else:
+            sentiment = "NEUTRAL"
+            
+        return {
+            "sentiment": sentiment,
+            "score": round(clamped_score, 2),
+            "confidence": min(0.9, 0.45 + (0.1 * total)),
+            "factors": bull_matches + bear_matches
+        }
+
     def analyze_with_finbert(self, text: str) -> dict:
         """
         Quick sentiment scoring using FinBERT.
@@ -70,7 +123,7 @@ class NewsAnalyzer:
         """
         pipeline = self._get_finbert()
         if pipeline is None:
-            return {"sentiment": "NEUTRAL", "score": 0.0, "confidence": 0.0}
+            return self._analyze_with_lexicon(text)
 
         try:
             # Truncate to FinBERT max length
@@ -153,16 +206,27 @@ Important context:
 """
 
         try:
-            response = client.models.generate_content(
-                model=self.settings.gemini.model,
-                contents=prompt,
-                config={
-                    "temperature": self.settings.gemini.temperature,
-                    "max_output_tokens": self.settings.gemini.max_tokens,
-                },
-            )
+            import asyncio
 
-            text = response.text.strip()
+            def _call_gemini_sync():
+                return client.models.generate_content(
+                    model=self.settings.gemini.model,
+                    contents=prompt,
+                    config={
+                        "temperature": self.settings.gemini.temperature,
+                        "max_output_tokens": self.settings.gemini.max_tokens,
+                    },
+                )
+
+            # Non-blocking async execution with 12s timeout
+            try:
+                response = await asyncio.wait_for(
+                    asyncio.to_thread(_call_gemini_sync),
+                    timeout=12.0
+                )
+                text = response.text.strip()
+            except asyncio.TimeoutError:
+                raise TimeoutError("Gemini API call timed out after 12s")
 
             # Robust JSON extraction from potential markdown or introductory text
             import re
@@ -214,12 +278,21 @@ Important context:
             err_msg = str(e)
             if self.settings.gemini.api_key:
                 err_msg = err_msg.replace(self.settings.gemini.api_key, "***GEMINI_KEY***")
-            logger.error(f"Gemini analysis error: {err_msg}")
+            logger.warning(f"Gemini analysis fallback (temporary issue: {err_msg[:90]}...)")
+            
+            # Intelligent fallback to domain lexicon
+            lex = self._analyze_with_lexicon(f"{headline}. {summary}")
+            impact = "HIGH" if abs(lex["score"]) >= 0.5 else ("MEDIUM" if abs(lex["score"]) >= 0.25 else "LOW")
+            direction = "UP" if lex["score"] > 0.15 else ("DOWN" if lex["score"] < -0.15 else "FLAT")
             return {
-                "sentiment": "NEUTRAL",
-                "score": 0.0,
-                "impact_level": "LOW",
-                "analysis": f"Error: {str(e)}",
+                "sentiment": lex["sentiment"],
+                "score": lex["score"],
+                "impact_level": impact,
+                "expected_direction": direction,
+                "time_horizon": "SHORT",
+                "is_risk_off": lex["score"] > 0,
+                "key_factors": lex.get("factors", []),
+                "analysis": f"Macro Sentiment: {lex['sentiment']} (Score: {lex['score']:+.2f})",
             }
 
     async def analyze_article(self, article: dict) -> dict:

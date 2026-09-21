@@ -118,9 +118,15 @@ def run_telegram():
     mt5 = MT5Connector()
     mt5.connect(max_retries=1, retry_delay=1)
 
+    from strategies.regime_detector import RegimeDetector
+    from analysis.technical import TechnicalAnalyzer
+
     class StandaloneBot:
         def __init__(self, mt5_conn):
             self.mt5 = mt5_conn
+            self.regime_detector = RegimeDetector()
+            self.technical = TechnicalAnalyzer()
+            self._last_regime = None
             self._trading_paused = False
 
     bot_wrapper = StandaloneBot(mt5)

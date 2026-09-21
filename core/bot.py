@@ -363,7 +363,7 @@ class TradingBot:
         try:
             articles = await self.news_fetcher.fetch_all_news()
 
-            for article in articles[:10]:  # Process top 10 most recent
+            for article in articles[:5]:   # Process top 5 most recent for fast responsiveness
                 analysis = await self.news_analyzer.analyze_article(article)
 
                 # Add to sentiment aggregator

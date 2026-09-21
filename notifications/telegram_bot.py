@@ -394,45 +394,86 @@ class TelegramNotifier:
         if not self._is_authorized(update):
             return
 
-        sentiment_score = crud.get_recent_sentiment(hours=6)
+        sentiment_score = crud.get_recent_sentiment(hours=24)
         sent_emoji = "📈 BULLISH" if sentiment_score > 0.1 else ("📉 BEARISH" if sentiment_score < -0.1 else "➡️ NEUTRAL")
 
         msg = (
             f"📰 <b>MARKET NEWS & AI SENTIMENT</b>\n"
             f"{'━' * 28}\n\n"
-            f"<b>Composite 6H Sentiment:</b> {sent_emoji} (<code>{sentiment_score:+.2f}</code>)\n"
-            f"<b>AI Engine:</b> Gemini 3.6 Flash + FinBERT\n\n"
+            f"<b>Composite 24H Sentiment:</b> {sent_emoji} (<code>{sentiment_score:+.2f}</code>)\n"
+            f"<b>AI Engine:</b> Gemini 3.6 Flash + Bullion Sentiment\n\n"
         )
 
         # Pull top news events from DB
         session = crud.get_session()
         try:
             from database.models import NewsEvent
-            events = session.query(NewsEvent).order_by(NewsEvent.published_at.desc()).limit(3).all()
+            events = session.query(NewsEvent).order_by(NewsEvent.id.desc()).limit(4).all()
             if events:
                 msg += "<b>Latest Macro Analysis:</b>\n"
                 for ev in events:
-                    impact_emoji = "🔴" if ev.impact_level == "HIGH" else "🟡"
+                    impact_emoji = "🔴" if ev.impact_level == "HIGH" else ("🟡" if ev.impact_level == "MEDIUM" else "🟢")
                     msg += (
                         f"{impact_emoji} <b>{ev.headline[:75]}...</b>\n"
-                        f"   Sentiment: {ev.sentiment} ({ev.sentiment_score:+.2f})\n"
+                        f"   Sentiment: <b>{ev.sentiment}</b> (<code>{ev.sentiment_score:+.2f}</code>) | Source: <i>{ev.source}</i>\n"
                     )
                     if ev.gemini_analysis:
-                        msg += f"   <i>AI Note:</i> {ev.gemini_analysis[:100]}...\n\n"
+                        clean_note = ev.gemini_analysis[:110].replace("<", "&lt;").replace(">", "&gt;")
+                        msg += f"   <i>AI Note:</i> {clean_note}...\n\n"
+                    else:
+                        msg += "\n"
             else:
-                msg += "<i>No recent news cached. The bot queries Finnhub and Alpha Vantage every 15 minutes.</i>\n"
+                msg += "<i>No news cached yet. Tap '⚡ Fetch Fresh News' below to load live articles instantly.</i>\n"
         finally:
             session.close()
 
         keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton("🔄 Refresh News", callback_data="cb_news")],
+            [InlineKeyboardButton("⚡ Fetch Fresh News Now", callback_data="cb_fetch_fresh_news")],
+            [InlineKeyboardButton("🔄 Refresh View", callback_data="cb_news")],
             [InlineKeyboardButton("🔙 Back to Main Menu", callback_data="cb_menu")],
         ])
 
         await self._safe_edit_or_reply(update, text=msg, reply_markup=keyboard, parse_mode="HTML")
 
+    async def _handle_fetch_fresh_news(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Fetch live news from Finnhub & Alpha Vantage on-demand and update message."""
+        if not self._is_authorized(update):
+            return
+
+        loading_msg = "⏳ <i>Fetching & analyzing latest market news from Finnhub and Alpha Vantage...</i>"
+        await self._safe_edit_or_reply(update, text=loading_msg, parse_mode="HTML")
+
+        try:
+            from news.news_fetcher import NewsFetcher
+            from news.news_analyzer import NewsAnalyzer
+
+            fetcher = NewsFetcher()
+            analyzer = NewsAnalyzer()
+            articles = await fetcher.fetch_all_news()
+
+            for article in articles[:5]:
+                analysis = await analyzer.analyze_article(article)
+                crud.save_news_event(
+                    source=article.get("source", ""),
+                    headline=article.get("headline", ""),
+                    summary=article.get("summary", ""),
+                    url=article.get("url", ""),
+                    sentiment=analysis["sentiment"],
+                    sentiment_score=analysis["combined_score"],
+                    finbert_score=analysis["finbert"]["score"],
+                    gemini_score=analysis.get("gemini", {}).get("score", 0),
+                    gemini_analysis=analysis.get("gemini", {}).get("analysis", ""),
+                    impact_level=analysis["impact_level"],
+                    published_at=article.get("published_at"),
+                )
+        except Exception as e:
+            logger.error(f"On-demand news fetch failed: {e}")
+
+        # Render updated news
+        await self._handle_news(update, context)
+
     async def _handle_regime(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Handle /regime command or button."""
+        """Handle /regime command or button with real-time on-demand calculation."""
         if not self._is_authorized(update):
             return
 
@@ -441,25 +482,50 @@ class TelegramNotifier:
             f"{'━' * 28}\n\n"
         )
 
-        if self.bot_instance and hasattr(self.bot_instance, "regime_detector"):
+        regime = None
+        if self.bot_instance and hasattr(self.bot_instance, "_last_regime"):
             regime = getattr(self.bot_instance, "_last_regime", None)
-            if regime:
-                msg += (
-                    f"<b>Current Regime:</b> <code>{regime.regime.value}</code>\n"
-                    f"<b>Trend Strength (ADX):</b> <code>{regime.adx_value:.1f}</code>\n"
-                    f"<b>Volatility Percentile:</b> <code>{regime.volatility_percentile:.1f}% ({regime.volatility_label})</code>\n"
-                    f"<b>Position Sizing Modifier:</b> <code>{regime.position_size_modifier:.2f}x</code>\n"
-                    f"<b>Trading Allowed:</b> {'✅ YES' if regime.should_trade else '⏸️ PAUSED'}\n\n"
-                    f"<b>Recommended Strategies:</b>\n"
-                )
-                for s in regime.recommended_strategies:
-                    msg += f"   • <code>{s}</code>\n"
-            else:
-                msg += "<i>Regime analysis will be updated after the next H4 candle cycle.</i>\n"
+
+        if not regime:
+            # Dynamic on-demand regime computation via MT5 H4 candles
+            try:
+                from core.mt5_connector import MT5Connector
+                from strategies.regime_detector import RegimeDetector
+                from analysis.technical import TechnicalAnalyzer
+
+                mt5_obj = getattr(self.bot_instance, "mt5", None)
+                if not mt5_obj:
+                    mt5_obj = MT5Connector()
+
+                if mt5_obj.connect(max_retries=1, retry_delay=0.1):
+                    df_h4 = mt5_obj.get_rates(timeframe="H4", count=200, auto_reconnect=False)
+                    if df_h4 is not None and not df_h4.empty:
+                        ta = TechnicalAnalyzer()
+                        df_analyzed = ta.add_all_indicators(df_h4.copy())
+                        rd = RegimeDetector()
+                        regime = rd.analyze(df_analyzed)
+                        if self.bot_instance:
+                            setattr(self.bot_instance, "_last_regime", regime)
+            except Exception as e:
+                logger.warning(f"On-demand regime analysis failed: {e}")
+
+        if regime:
+            regime_emoji = "📈" if "BULL" in regime.regime.value else ("📉" if "BEAR" in regime.regime.value else "🔄")
+            msg += (
+                f"<b>Current Regime:</b> {regime_emoji} <code>{regime.regime.value}</code>\n"
+                f"<b>Trend Strength (ADX):</b> <code>{regime.adx_value:.1f}</code>\n"
+                f"<b>Volatility Percentile:</b> <code>{regime.volatility_percentile:.1f}% ({regime.volatility_label})</code>\n"
+                f"<b>Position Sizing Modifier:</b> <code>{regime.position_size_modifier:.2f}x</code>\n"
+                f"<b>Trading Allowed:</b> {'✅ YES' if regime.should_trade else '⏸️ PAUSED'}\n\n"
+                f"<b>Active Recommended Strategies:</b>\n"
+            )
+            for s in regime.recommended_strategies:
+                msg += f"   • <code>{s.upper()}</code>\n"
         else:
-            msg += "<i>Bot instance offline or warming up.</i>\n"
+            msg += "<i>MT5 offline or H4 candle data unavailable. Ensure MT5 is running on your desktop.</i>\n"
 
         keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🔄 Refresh Regime", callback_data="cb_regime")],
             [InlineKeyboardButton("🔙 Back to Main Menu", callback_data="cb_menu")],
         ])
 
@@ -772,6 +838,8 @@ class TelegramNotifier:
                 await self._handle_pnl(update, context)
             elif data == "cb_news":
                 await self._handle_news(update, context)
+            elif data == "cb_fetch_fresh_news":
+                await self._handle_fetch_fresh_news(update, context)
             elif data == "cb_regime":
                 await self._handle_regime(update, context)
             elif data == "cb_price":

@@ -1,3 +1,5 @@
+from pydantic import BaseModel
+from typing import Optional
 """
 Web Dashboard — FastAPI Application
 
@@ -157,6 +159,188 @@ async def get_recent_news():
 
 
 # ── WebSocket ────────────────────────────────────────────────────────────
+
+
+class OrderRequest(BaseModel):
+    action: str
+    volume: float
+    sl_pips: Optional[float] = None
+    tp_pips: Optional[float] = None
+
+
+@app.get("/api/chart")
+async def get_chart_data(timeframe: str = "H1", count: int = 150):
+    """Get real OHLCV candlestick data from MT5 for TradingView Lightweight Charts."""
+    try:
+        from core.mt5_connector import MT5Connector
+        mt5 = MT5Connector()
+        if mt5.connect(max_retries=1, retry_delay=0.1):
+            tf = timeframe.upper()
+            df = mt5.get_rates(timeframe=tf, count=min(count, 500), auto_reconnect=False)
+            if df is not None and not df.empty:
+                candles = []
+                for idx, row in df.iterrows():
+                    ts = int(idx.timestamp()) if hasattr(idx, "timestamp") else int(idx)
+                    candles.append({
+                        "time": ts,
+                        "open": round(float(row["open"]), 2),
+                        "high": round(float(row["high"]), 2),
+                        "low": round(float(row["low"]), 2),
+                        "close": round(float(row["close"]), 2),
+                        "volume": float(row.get("volume", 0)),
+                    })
+                return JSONResponse(candles)
+        return JSONResponse([])
+    except Exception as e:
+        logger.error(f"Error fetching chart candles: {e}")
+        return JSONResponse([])
+
+
+@app.get("/api/regime")
+async def get_regime():
+    """Get live market regime, ADX, and recommended strategies."""
+    try:
+        from core.mt5_connector import MT5Connector
+        from strategies.regime_detector import RegimeDetector
+        from analysis.technical import TechnicalAnalyzer
+
+        mt5 = MT5Connector()
+        if mt5.connect(max_retries=1, retry_delay=0.1):
+            df_h4 = mt5.get_rates(timeframe="H4", count=200, auto_reconnect=False)
+            if df_h4 is not None and not df_h4.empty:
+                ta = TechnicalAnalyzer()
+                df_analyzed = ta.add_all_indicators(df_h4.copy())
+                rd = RegimeDetector()
+                regime = rd.analyze(df_analyzed)
+                return JSONResponse({
+                    "regime": regime.regime.value,
+                    "adx": round(float(regime.adx_value), 1),
+                    "volatility_percentile": round(float(regime.volatility_percentile), 1),
+                    "volatility_label": regime.volatility_label,
+                    "position_size_modifier": round(float(regime.position_size_modifier), 2),
+                    "should_trade": bool(regime.should_trade),
+                    "recommended_strategies": regime.recommended_strategies,
+                })
+        return JSONResponse({"regime": "UNKNOWN", "error": "MT5 Offline"})
+    except Exception as e:
+        logger.error(f"Error computing market regime: {e}")
+        return JSONResponse({"regime": "UNKNOWN", "error": str(e)})
+
+
+@app.get("/api/sentiment")
+async def get_sentiment_overview():
+    """Get 24H composite sentiment score and status."""
+    score = crud.get_recent_sentiment(hours=24)
+    label = "BULLISH" if score > 0.15 else ("BEARISH" if score < -0.15 else "NEUTRAL")
+    return JSONResponse({
+        "score": round(score, 2),
+        "label": label,
+        "direction": "UP" if score > 0.15 else ("DOWN" if score < -0.15 else "FLAT")
+    })
+
+
+@app.post("/api/close-position/{ticket}")
+async def close_position(ticket: int):
+    """Close a specific open position."""
+    try:
+        from core.mt5_connector import MT5Connector
+        mt5 = MT5Connector()
+        if mt5.connect(max_retries=1, retry_delay=0.1):
+            success = mt5.close_position(ticket)
+            return JSONResponse({"success": success, "ticket": ticket})
+        return JSONResponse({"success": False, "error": "MT5 offline"}, status_code=500)
+    except Exception as e:
+        logger.error(f"Error closing position {ticket}: {e}")
+        return JSONResponse({"success": False, "error": str(e)}, status_code=500)
+
+
+@app.post("/api/close-all")
+async def close_all_positions():
+    """Emergency close all open positions."""
+    try:
+        from core.mt5_connector import MT5Connector
+        mt5 = MT5Connector()
+        if mt5.connect(max_retries=1, retry_delay=0.1):
+            closed_count = mt5.close_all_positions()
+            return JSONResponse({"success": True, "closed_count": closed_count})
+        return JSONResponse({"success": False, "error": "MT5 offline"}, status_code=500)
+    except Exception as e:
+        logger.error(f"Error closing all positions: {e}")
+        return JSONResponse({"success": False, "error": str(e)}, status_code=500)
+
+
+@app.post("/api/order")
+async def place_manual_order(req: OrderRequest):
+    """Place a manual market order from the dashboard."""
+    try:
+        from core.mt5_connector import MT5Connector
+        mt5 = MT5Connector()
+        if mt5.connect(max_retries=1, retry_delay=0.1):
+            symbol = "XAUUSD"
+            tick = mt5.get_current_price(symbol)
+            if not tick:
+                return JSONResponse({"success": False, "error": "Could not fetch XAUUSD price"}, status_code=400)
+
+            price = tick["ask"] if req.action.upper() == "BUY" else tick["bid"]
+            pip = 0.10
+            sl = None
+            tp = None
+            if req.sl_pips:
+                sl = price - (req.sl_pips * pip) if req.action.upper() == "BUY" else price + (req.sl_pips * pip)
+            if req.tp_pips:
+                tp = price + (req.tp_pips * pip) if req.action.upper() == "BUY" else price - (req.tp_pips * pip)
+
+            order_type = "BUY" if req.action.upper() == "BUY" else "SELL"
+            res = mt5.open_position(
+                symbol=symbol,
+                order_type=order_type,
+                volume=max(0.01, round(req.volume, 2)),
+                sl=sl,
+                tp=tp,
+                comment="Dashboard Order"
+            )
+            if res:
+                return JSONResponse({"success": True, "ticket": res.get("ticket"), "price": price})
+            return JSONResponse({"success": False, "error": "MT5 order execution failed"}, status_code=400)
+        return JSONResponse({"success": False, "error": "MT5 offline"}, status_code=500)
+    except Exception as e:
+        logger.error(f"Manual order placement error: {e}")
+        return JSONResponse({"success": False, "error": str(e)}, status_code=500)
+
+
+@app.post("/api/news/refresh")
+async def refresh_news_feed():
+    """Trigger background news refresh."""
+    try:
+        from news.news_fetcher import NewsFetcher
+        from news.news_analyzer import NewsAnalyzer
+
+        fetcher = NewsFetcher()
+        analyzer = NewsAnalyzer()
+        articles = await fetcher.fetch_all_news()
+
+        count = 0
+        for article in articles[:5]:
+            analysis = await analyzer.analyze_article(article)
+            crud.save_news_event(
+                source=article.get("source", ""),
+                headline=article.get("headline", ""),
+                summary=article.get("summary", ""),
+                url=article.get("url", ""),
+                sentiment=analysis["sentiment"],
+                sentiment_score=analysis["combined_score"],
+                finbert_score=analysis["finbert"]["score"],
+                gemini_score=analysis.get("gemini", {}).get("score", 0),
+                gemini_analysis=analysis.get("gemini", {}).get("analysis", ""),
+                impact_level=analysis["impact_level"],
+                published_at=article.get("published_at"),
+            )
+            count += 1
+        return JSONResponse({"success": True, "articles_processed": count})
+    except Exception as e:
+        logger.error(f"News refresh error: {e}")
+        return JSONResponse({"success": False, "error": str(e)}, status_code=500)
+
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
