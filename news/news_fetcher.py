@@ -13,6 +13,13 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 import httpx
+import re
+
+
+def _sanitize_log(msg: str) -> str:
+    """Mask API tokens from URLs and error tracebacks."""
+    return re.sub(r'([?&](?:token|apikey|api_key)=)[^&\s]+', r'\1***REDACTED***', str(msg))
+
 from loguru import logger
 
 from config.settings import get_settings
@@ -37,6 +44,7 @@ class NewsFetcher:
         # Cache to avoid duplicate processing
         self._seen_headlines: set[str] = set()
         self._last_fetch: Optional[datetime] = None
+        self._alpha_vantage_cooldown_until: Optional[datetime] = None
 
     def _headline_hash(self, headline: str) -> str:
         """Create a hash of a headline for deduplication."""
@@ -62,14 +70,12 @@ class NewsFetcher:
             return []
 
         url = "https://finnhub.io/api/v1/news"
-        params = {
-            "category": category,
-            "token": self.finnhub_key,
-        }
+        params = {"category": category}
+        headers = {"X-Finnhub-Token": self.finnhub_key}
 
         try:
             async with httpx.AsyncClient(timeout=15) as client:
-                response = await client.get(url, params=params)
+                response = await client.get(url, params=params, headers=headers)
                 response.raise_for_status()
                 articles = response.json()
 
@@ -105,10 +111,10 @@ class NewsFetcher:
             return relevant
 
         except httpx.HTTPError as e:
-            logger.error(f"Finnhub API error: {e}")
+            logger.error(_sanitize_log(f"Finnhub API error: {e}"))
             return []
         except Exception as e:
-            logger.error(f"Finnhub fetch error: {e}")
+            logger.error(_sanitize_log(f"Finnhub fetch error: {e}"))
             return []
 
     async def fetch_alpha_vantage_news(
@@ -130,6 +136,10 @@ class NewsFetcher:
             logger.warning("Alpha Vantage API key not configured")
             return []
 
+        if self._alpha_vantage_cooldown_until and datetime.now(timezone.utc) < self._alpha_vantage_cooldown_until:
+            logger.debug("Alpha Vantage in cooldown window, skipping fetch.")
+            return []
+
         url = "https://www.alphavantage.co/query"
         params = {
             "function": "NEWS_SENTIMENT",
@@ -148,6 +158,14 @@ class NewsFetcher:
                 data = response.json()
 
             feed = data.get("feed", [])
+            if "Note" in data:
+                logger.warning(f"Alpha Vantage rate limit reached: {data['Note'][:100]}... Backing off 15m.")
+                self._alpha_vantage_cooldown_until = datetime.now(timezone.utc) + timedelta(minutes=15)
+                return []
+            if "Information" in data:
+                logger.warning(f"Alpha Vantage notice: {data['Information'][:100]}... Backing off 15m.")
+                self._alpha_vantage_cooldown_until = datetime.now(timezone.utc) + timedelta(minutes=15)
+                return []
             relevant = []
 
             for article in feed:
@@ -191,10 +209,10 @@ class NewsFetcher:
             return relevant
 
         except httpx.HTTPError as e:
-            logger.error(f"Alpha Vantage API error: {e}")
+            logger.error(_sanitize_log(f"Alpha Vantage API error: {e}"))
             return []
         except Exception as e:
-            logger.error(f"Alpha Vantage fetch error: {e}")
+            logger.error(_sanitize_log(f"Alpha Vantage fetch error: {e}"))
             return []
 
     async def fetch_all_news(self) -> list[dict]:

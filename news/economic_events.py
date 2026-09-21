@@ -73,11 +73,11 @@ class EconomicEventsManager:
             params = {
                 "from": today_str,
                 "to": end_date,
-                "token": self.finnhub_key,
             }
+            headers = {"X-Finnhub-Token": self.finnhub_key}
 
             async with httpx.AsyncClient(timeout=10.0) as client:
-                resp = await client.get(url, params=params)
+                resp = await client.get(url, params=params, headers=headers)
                 if resp.status_code == 200:
                     data = resp.json()
                     events = data.get("economicCalendar", [])

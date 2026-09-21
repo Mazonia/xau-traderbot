@@ -10,6 +10,8 @@ Handles:
 """
 
 import time
+import functools
+import threading
 from datetime import datetime, timedelta, timezone
 from enum import Enum
 from typing import Optional
@@ -40,6 +42,15 @@ class Timeframe(Enum):
 TIMEFRAME_MAP: dict[str, Timeframe] = {tf.name: tf for tf in Timeframe}
 
 
+
+def synchronized(method):
+    """Decorator to ensure thread-safe MT5 IPC operations using an RLock."""
+    @functools.wraps(method)
+    def wrapper(self, *args, **kwargs):
+        with self._lock:
+            return method(self, *args, **kwargs)
+    return wrapper
+
 class MT5Connector:
     """
     Manages the connection to MetaTrader 5 via the Python API.
@@ -57,9 +68,11 @@ class MT5Connector:
         self._connected = False
         self._max_retries = 5
         self._retry_delay = 5  # seconds
+        self._lock = threading.RLock()  # Thread-safe MT5 IPC mutex
 
     # ── Connection Management ────────────────────────────────────────────
 
+    @synchronized
     def connect(self, max_retries: int | None = None, retry_delay: float | None = None) -> bool:
         """
         Initialize connection to MT5 terminal with auto-retry.
@@ -116,6 +129,7 @@ class MT5Connector:
         logger.critical("Failed to connect to MT5 after all retries")
         return False
 
+    @synchronized
     def disconnect(self):
         """Safely shut down the MT5 connection."""
         if self._connected:
@@ -123,6 +137,7 @@ class MT5Connector:
             self._connected = False
             logger.info("MT5 connection closed")
 
+    @synchronized
     def is_connected(self) -> bool:
         """Check if MT5 is still connected and responsive."""
         if not self._connected:
@@ -143,6 +158,7 @@ class MT5Connector:
 
     # ── Market Data ──────────────────────────────────────────────────────
 
+    @synchronized
     def get_rates(
         self,
         symbol: str | None = None,
@@ -196,6 +212,7 @@ class MT5Connector:
         )
         return df
 
+    @synchronized
     def get_rates_range(
         self,
         start_date: datetime,
@@ -226,6 +243,7 @@ class MT5Connector:
         df.set_index("time", inplace=True)
         return df
 
+    @synchronized
     def get_current_tick(self, symbol: str | None = None) -> dict | None:
         """
         Get the latest tick (bid/ask) for the symbol.
@@ -252,6 +270,7 @@ class MT5Connector:
             "spread": round((tick.ask - tick.bid) * 100, 1),  # In points
         }
 
+    @synchronized
     def get_symbol_info(self, symbol: str | None = None) -> dict | None:
         """Get symbol specifications (pip value, lot size, etc.)."""
         if not self.ensure_connected():
@@ -281,6 +300,7 @@ class MT5Connector:
 
     # ── Account Information ──────────────────────────────────────────────
 
+    @synchronized
     def get_account_info(self, auto_reconnect: bool = True) -> dict | None:
         """Get current account information."""
         if not self.is_connected():
@@ -305,6 +325,7 @@ class MT5Connector:
             "trade_allowed": info.trade_allowed,
         }
 
+    @synchronized
     def get_open_positions(self, symbol: str | None = None) -> list[dict]:
         """Get all open positions, optionally filtered by symbol."""
         if not self.ensure_connected():
@@ -337,6 +358,7 @@ class MT5Connector:
             for pos in positions
         ]
 
+    @synchronized
     def get_pending_orders(self, symbol: str | None = None) -> list[dict]:
         """Get all pending orders."""
         if not self.ensure_connected():
@@ -374,6 +396,7 @@ class MT5Connector:
 
     # ── Trade Execution (Primitives) ─────────────────────────────────────
 
+    @synchronized
     def _get_filling_mode(self, symbol: str) -> int:
         """Determine the broker-supported order filling mode (e.g. Exness)."""
         try:
@@ -387,6 +410,7 @@ class MT5Connector:
             pass
         return mt5.ORDER_FILLING_RETURN
 
+    @synchronized
     def send_market_order(
         self,
         order_type: str,
@@ -441,7 +465,7 @@ class MT5Connector:
             "price": price,
             "sl": sl,
             "tp": tp,
-            "deviation": 20,  # Max price deviation in points
+            "deviation": 30,  # Max price deviation in points
             "magic": magic,
             "comment": comment,
             "type_time": mt5.ORDER_TIME_GTC,
@@ -475,6 +499,7 @@ class MT5Connector:
 
         return result_dict
 
+    @synchronized
     def modify_position(
         self,
         ticket: int,
@@ -502,6 +527,7 @@ class MT5Connector:
         logger.error(f"Failed to modify position {ticket}: {error}")
         return False
 
+    @synchronized
     def close_position(
         self,
         ticket: int,
@@ -529,13 +555,18 @@ class MT5Connector:
         close_volume = volume if volume else position.volume
         symbol = position.symbol
 
-        # Determine close order type (opposite of position)
+        # Determine close order type (opposite of position) with null-safe tick check
+        tick = mt5.symbol_info_tick(symbol)
+        if tick is None:
+            logger.error(f"Cannot get current price tick to close position {ticket} for {symbol}")
+            return False
+
         if position.type == mt5.ORDER_TYPE_BUY:
             close_type = mt5.ORDER_TYPE_SELL
-            price = mt5.symbol_info_tick(symbol).bid
+            price = tick.bid
         else:
             close_type = mt5.ORDER_TYPE_BUY
-            price = mt5.symbol_info_tick(symbol).ask
+            price = tick.ask
 
         request = {
             "action": mt5.TRADE_ACTION_DEAL,
@@ -544,7 +575,7 @@ class MT5Connector:
             "type": close_type,
             "position": ticket,
             "price": price,
-            "deviation": 20,
+            "deviation": 30,
             "magic": position.magic,
             "comment": comment,
             "type_time": mt5.ORDER_TIME_GTC,
@@ -584,6 +615,7 @@ class MT5Connector:
     def __exit__(self, exc_type, exc_val, exc_tb):
         self.disconnect()
 
+    @synchronized
     def get_closed_deal_info(self, ticket: int) -> dict | None:
         """Fetch exact closing price, profit, and reason from MT5 deal history."""
         if not self.ensure_connected():

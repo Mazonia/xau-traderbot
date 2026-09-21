@@ -104,7 +104,7 @@ class DashboardSettings(BaseSettings):
     secret_key: str = Field(default="change-me-in-production", alias="DASHBOARD_SECRET_KEY")
     username: str = Field(default="admin", alias="DASHBOARD_USERNAME")
     password: str = Field(default="", alias="DASHBOARD_PASSWORD")
-    host: str = "0.0.0.0"
+    host: str = Field(default="127.0.0.1", alias="DASHBOARD_HOST")
     port: int = 8080
 
     model_config = _COMMON_CONFIG

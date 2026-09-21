@@ -172,10 +172,33 @@ Important context:
             else:
                 result = json.loads(text)
 
+            # Strict validation and boundary clamping for AI-derived fields
+            try:
+                score = float(result.get("score", 0.0))
+            except (ValueError, TypeError):
+                score = 0.0
+            score = max(-1.0, min(1.0, score))
+
+            sentiment = str(result.get("sentiment", "NEUTRAL")).strip().upper()
+            if sentiment not in ("BULLISH", "BEARISH", "NEUTRAL"):
+                sentiment = "NEUTRAL"
+
+            impact = str(result.get("impact_level", "LOW")).strip().upper()
+            if impact not in ("HIGH", "MEDIUM", "LOW"):
+                impact = "LOW"
+
+            direction = str(result.get("expected_direction", "FLAT")).strip().upper()
+            if direction not in ("UP", "DOWN", "FLAT"):
+                direction = "FLAT"
+
+            result["score"] = score
+            result["sentiment"] = sentiment
+            result["impact_level"] = impact
+            result["expected_direction"] = direction
+
             logger.info(
-                f"Gemini analysis: {result.get('sentiment')} "
-                f"(score={result.get('score', 0):.2f}, "
-                f"impact={result.get('impact_level', 'LOW')})"
+                f"Gemini analysis: {sentiment} "
+                f"(score={score:.2f}, impact={impact})"
             )
             return result
 
@@ -188,7 +211,10 @@ Important context:
                 "analysis": "Failed to parse Gemini response",
             }
         except Exception as e:
-            logger.error(f"Gemini analysis error: {e}")
+            err_msg = str(e)
+            if self.settings.gemini.api_key:
+                err_msg = err_msg.replace(self.settings.gemini.api_key, "***GEMINI_KEY***")
+            logger.error(f"Gemini analysis error: {err_msg}")
             return {
                 "sentiment": "NEUTRAL",
                 "score": 0.0,

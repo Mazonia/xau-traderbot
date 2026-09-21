@@ -7,6 +7,7 @@ and performance snapshots.
 
 from datetime import datetime, timezone
 
+from sqlalchemy import event
 from sqlalchemy import (
     Boolean,
     Column,
@@ -172,15 +173,31 @@ _SessionFactory = None
 
 
 def get_engine():
-    """Get or create the SQLAlchemy engine."""
+    """Get or create the SQLAlchemy engine with WAL concurrency and 30s busy timeout."""
     global _engine
     if _engine is None:
         settings = get_settings()
+        is_sqlite = "sqlite" in settings.database.url.lower()
+        connect_args = {"timeout": 30.0} if is_sqlite else {}
+
         _engine = create_engine(
             settings.database.url,
             echo=settings.database.echo,
             pool_pre_ping=True,
+            connect_args=connect_args,
         )
+
+        if is_sqlite:
+            @event.listens_for(_engine, "connect")
+            def set_sqlite_pragma(dbapi_connection, connection_record):
+                try:
+                    cursor = dbapi_connection.cursor()
+                    cursor.execute("PRAGMA journal_mode=WAL;")
+                    cursor.execute("PRAGMA synchronous=NORMAL;")
+                    cursor.close()
+                except Exception:
+                    pass
+
     return _engine
 
 

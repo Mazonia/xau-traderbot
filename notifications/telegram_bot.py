@@ -59,6 +59,14 @@ class TelegramNotifier:
         self.chat_id = str(self.settings.telegram.chat_id)
         self.bot_instance = bot_instance
 
+        # Parse authorized chat IDs (supports comma-separated list of IDs)
+        raw_chat_id = str(self.settings.telegram.chat_id or "").strip()
+        self.authorized_ids: set[str] = {
+            cid.strip()
+            for cid in raw_chat_id.split(",")
+            if cid.strip() and cid.strip() != "0"
+        }
+
         self._app: Optional[Application] = None
         self._is_polling = False
         self._enabled = bool(self.bot_token and self.chat_id and self.chat_id != "0")
@@ -71,14 +79,25 @@ class TelegramNotifier:
         self.bot_instance = bot_instance
 
     def _is_authorized(self, update: Update) -> bool:
-        """Verify message sender matches the authorized Telegram chat ID."""
-        if not update.effective_chat:
+        """
+        Verify message sender matches the authorized Telegram chat or user ID whitelist.
+        Rejects unauthorized users with security logging.
+        """
+        if not self.authorized_ids:
             return False
-        sender_id = str(update.effective_chat.id)
-        if sender_id != self.chat_id:
-            logger.warning(f"Unauthorized Telegram access attempt from Chat ID: {sender_id}")
-            return False
-        return True
+
+        sender_chat_id = str(update.effective_chat.id) if update.effective_chat else ""
+        sender_user_id = str(update.effective_user.id) if update.effective_user else ""
+        username = update.effective_user.username if update.effective_user else "unknown"
+
+        if sender_chat_id in self.authorized_ids or sender_user_id in self.authorized_ids:
+            return True
+
+        logger.warning(
+            f"⛔ UNAUTHORIZED Telegram access attempt | User: @{username} "
+            f"(User ID: {sender_user_id}, Chat ID: {sender_chat_id})"
+        )
+        return False
 
     # ── Interactive Keyboards ─────────────────────────────────────────────
 
@@ -119,8 +138,25 @@ class TelegramNotifier:
 
     async def _handle_start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /start or /menu command."""
+        if not self.authorized_ids:
+            sender_id = update.effective_chat.id if update.effective_chat else (update.effective_user.id if update.effective_user else "unknown")
+            if update.effective_message:
+                await update.effective_message.reply_text(
+                    f"⚠️ <b>TELEGRAM BOT SETUP REQUIRED</b>\n\n"
+                    f"Your Telegram ID is: <code>{sender_id}</code>\n\n"
+                    f"To authorize this account, add this to your <code>config/.env</code> file:\n"
+                    f"<code>TELEGRAM_CHAT_ID={sender_id}</code>\n\n"
+                    f"Then restart the bot to activate remote control.",
+                    parse_mode="HTML"
+                )
+            return
+
         if not self._is_authorized(update):
-            await update.effective_message.reply_text("⛔ Unauthorized access.")
+            if update.effective_message:
+                await update.effective_message.reply_text(
+                    "⛔ <b>Access Denied</b>\nThis bot is private and restricted to authorized operators.",
+                    parse_mode="HTML"
+                )
             return
 
         mode = "DEMO" if self.settings.demo_mode else "LIVE"
@@ -663,8 +699,18 @@ class TelegramNotifier:
         await update.effective_message.reply_text(msg, parse_mode="HTML")
 
     async def _callback_router(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Route callback queries from inline buttons with instant answer."""
+        """Route callback queries from inline buttons with gatekeeper authorization check."""
         query = update.callback_query
+        if not query:
+            return
+
+        if not self._is_authorized(update):
+            try:
+                await query.answer("⛔ Unauthorized: You are not authorized to control this bot.", show_alert=True)
+            except Exception:
+                pass
+            return
+
         try:
             await query.answer()
         except Exception:
@@ -770,7 +816,10 @@ class TelegramNotifier:
                 reply_markup=reply_markup,
             )
         except Exception as e:
-            logger.error(f"Telegram send error: {e}")
+            err_msg = str(e)
+            if self.bot_token:
+                err_msg = err_msg.replace(self.bot_token, "***BOT_TOKEN***")
+            logger.error(f"Telegram send error: {err_msg}")
 
     async def send_trade_opened(self, trade: dict):
         """Send trade entry alert with interactive quick-action buttons."""

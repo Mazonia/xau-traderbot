@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, JSONResponse
 from loguru import logger
@@ -22,6 +23,18 @@ app = FastAPI(
     title="XAUUSD AI Trading Bot",
     description="Real-time trading dashboard",
     version="1.0.0",
+)
+
+# Protect against Cross-Origin Request Forgery (CORS restriction)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://localhost:8080",
+        "http://127.0.0.1:8080",
+    ],
+    allow_credentials=True,
+    allow_methods=["GET", "POST"],
+    allow_headers=["*"],
 )
 
 STATIC_DIR = Path(__file__).parent / "static"
@@ -41,14 +54,18 @@ async def index():
 
 @app.get("/api/account")
 async def get_account():
-    """Get current account info (fast non-blocking)."""
+    """Get current account info (fast non-blocking with credential masking)."""
     try:
         from core.mt5_connector import MT5Connector
         mt5 = MT5Connector()
         if mt5.connect(max_retries=1, retry_delay=0.1):
             info = mt5.get_account_info(auto_reconnect=False)
             if info:
-                return JSONResponse(info)
+                sanitized_info = dict(info)
+                login_str = str(sanitized_info.get("login", ""))
+                sanitized_info["login"] = f"***{login_str[-4:]}" if len(login_str) >= 4 else "***"
+                sanitized_info["connected"] = True
+                return JSONResponse(sanitized_info)
         return JSONResponse({"connected": False, "status": "MT5 Terminal Offline"})
     except Exception as e:
         return JSONResponse({"connected": False, "error": str(e)})
