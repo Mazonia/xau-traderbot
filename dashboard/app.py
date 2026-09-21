@@ -58,8 +58,8 @@ async def index():
 async def get_account():
     """Get current account info (fast non-blocking with credential masking and today's P&L)."""
     try:
-        from core.mt5_connector import MT5Connector
-        mt5 = MT5Connector()
+        from core.mt5_connector import get_mt5_connector
+        mt5 = get_mt5_connector()
         if mt5.connect(max_retries=1, retry_delay=0.1):
             info = mt5.get_account_info(auto_reconnect=False)
             if info:
@@ -86,8 +86,8 @@ async def get_account():
 async def get_positions():
     """Get open positions (fast non-blocking)."""
     try:
-        from core.mt5_connector import MT5Connector
-        mt5 = MT5Connector()
+        from core.mt5_connector import get_mt5_connector
+        mt5 = get_mt5_connector()
         if mt5.connect(max_retries=1, retry_delay=0.1):
             positions = mt5.get_open_positions(auto_reconnect=False)
             for p in positions:
@@ -103,13 +103,12 @@ async def get_positions():
 async def get_trades():
     """Get recent trade history, auto-syncing latest broker deals from MT5."""
     try:
-        from core.mt5_connector import MT5Connector
-        mt5 = MT5Connector()
+        from core.mt5_connector import get_mt5_connector
+        mt5 = get_mt5_connector()
         if mt5.connect(max_retries=1, retry_delay=0.1):
             deals = mt5.get_historical_trades(days=30)
             if deals:
                 crud.sync_mt5_deals(deals)
-            mt5.disconnect()
     except Exception as e:
         logger.debug(f"Error during /api/trades MT5 sync: {e}")
 
@@ -217,8 +216,8 @@ class OrderRequest(BaseModel):
 async def get_chart_data(timeframe: str = "H1", count: int = 150):
     """Get real OHLCV candlestick data from MT5 for TradingView Lightweight Charts."""
     try:
-        from core.mt5_connector import MT5Connector
-        mt5 = MT5Connector()
+        from core.mt5_connector import get_mt5_connector
+        mt5 = get_mt5_connector()
         if mt5.connect(max_retries=1, retry_delay=0.1):
             tf = timeframe.upper()
             df = mt5.get_rates(timeframe=tf, count=min(count, 500), auto_reconnect=False)
@@ -245,11 +244,11 @@ async def get_chart_data(timeframe: str = "H1", count: int = 150):
 async def get_regime():
     """Get live market regime, ADX, and recommended strategies."""
     try:
-        from core.mt5_connector import MT5Connector
+        from core.mt5_connector import get_mt5_connector
         from strategies.regime_detector import RegimeDetector
         from analysis.technical import TechnicalAnalyzer
 
-        mt5 = MT5Connector()
+        mt5 = get_mt5_connector()
         if mt5.connect(max_retries=1, retry_delay=0.1):
             df_h4 = mt5.get_rates(timeframe="H4", count=200, auto_reconnect=False)
             if df_h4 is not None and not df_h4.empty:
@@ -288,9 +287,9 @@ async def get_sentiment_overview():
 async def close_position(ticket: int):
     """Close a specific open position and sync deals immediately."""
     try:
-        from core.mt5_connector import MT5Connector
+        from core.mt5_connector import get_mt5_connector
         import asyncio
-        mt5 = MT5Connector()
+        mt5 = get_mt5_connector()
         if mt5.connect(max_retries=1, retry_delay=0.1):
             success = mt5.close_position(ticket)
             if success:
@@ -298,7 +297,6 @@ async def close_position(ticket: int):
                 deals = mt5.get_historical_trades(days=7)
                 if deals:
                     crud.sync_mt5_deals(deals)
-            mt5.disconnect()
             return JSONResponse({"success": success, "ticket": ticket})
         return JSONResponse({"success": False, "error": "MT5 offline"}, status_code=500)
     except Exception as e:
@@ -310,9 +308,9 @@ async def close_position(ticket: int):
 async def close_all_positions():
     """Emergency close all open positions and sync deals immediately."""
     try:
-        from core.mt5_connector import MT5Connector
+        from core.mt5_connector import get_mt5_connector
         import asyncio
-        mt5 = MT5Connector()
+        mt5 = get_mt5_connector()
         if mt5.connect(max_retries=1, retry_delay=0.1):
             closed_count = mt5.close_all_positions()
             if closed_count > 0:
@@ -320,7 +318,6 @@ async def close_all_positions():
                 deals = mt5.get_historical_trades(days=7)
                 if deals:
                     crud.sync_mt5_deals(deals)
-            mt5.disconnect()
             return JSONResponse({"success": True, "closed_count": closed_count})
         return JSONResponse({"success": False, "error": "MT5 offline"}, status_code=500)
     except Exception as e:
@@ -332,8 +329,8 @@ async def close_all_positions():
 async def get_pending_orders():
     """Get active scheduled pending orders from MT5."""
     try:
-        from core.mt5_connector import MT5Connector
-        mt5 = MT5Connector()
+        from core.mt5_connector import get_mt5_connector
+        mt5 = get_mt5_connector()
         if mt5.connect(max_retries=1, retry_delay=0.1):
             pending = mt5.get_pending_orders(auto_reconnect=False)
             for p in pending:
@@ -350,8 +347,8 @@ async def get_pending_orders():
 async def cancel_pending_order(ticket: int):
     """Cancel a scheduled pending order by ticket."""
     try:
-        from core.mt5_connector import MT5Connector
-        mt5 = MT5Connector()
+        from core.mt5_connector import get_mt5_connector
+        mt5 = get_mt5_connector()
         if mt5.connect(max_retries=1, retry_delay=0.1):
             success = mt5.cancel_order(ticket)
             return JSONResponse({"success": success, "ticket": ticket})
@@ -365,8 +362,8 @@ async def cancel_pending_order(ticket: int):
 async def place_manual_order(req: OrderRequest):
     """Place a manual market or scheduled pending order from the dashboard."""
     try:
-        from core.mt5_connector import MT5Connector
-        mt5 = MT5Connector()
+        from core.mt5_connector import get_mt5_connector
+        mt5 = get_mt5_connector()
         if mt5.connect(max_retries=1, retry_delay=0.1):
             symbol = "XAUUSD"
             tick = mt5.get_current_tick(symbol)
@@ -463,15 +460,14 @@ async def refresh_news_feed():
 async def get_market_barometer():
     """Get live institutional technical barometer metrics (24h high/low, spread, ATR, RSI)."""
     try:
-        from core.mt5_connector import MT5Connector
+        from core.mt5_connector import get_mt5_connector
         from analysis.technical import TechnicalAnalyzer
 
-        mt5 = MT5Connector()
+        mt5 = get_mt5_connector()
         if mt5.connect(max_retries=1, retry_delay=0.1):
             tick = mt5.get_current_tick()
             df_d1 = mt5.get_rates(timeframe="D1", count=2)
             df_h1 = mt5.get_rates(timeframe="H1", count=30)
-            mt5.disconnect()
 
             high_24h = float(df_d1["high"].iloc[-1]) if df_d1 is not None and not df_d1.empty else 0.0
             low_24h = float(df_d1["low"].iloc[-1]) if df_d1 is not None and not df_d1.empty else 0.0
@@ -522,10 +518,10 @@ async def get_market_barometer():
                 "attention_concentration": attention_conc,
                 "anchor_type": anchor_type,
             })
-        return JSONResponse({"success": False, "error": "MT5 offline"}, status_code=500)
+        return JSONResponse({"success": False, "error": "MT5 offline"})
     except Exception as e:
         logger.error(f"Barometer error: {e}")
-        return JSONResponse({"success": False, "error": str(e)}, status_code=500)
+        return JSONResponse({"success": False, "error": str(e)})
 
 
 @app.on_event("startup")
@@ -533,9 +529,9 @@ async def start_realtime_streamer():
     """Background task to broadcast real-time price updates to WebSocket subscribers."""
     import asyncio
     async def stream_loop():
-        from core.mt5_connector import MT5Connector
+        from core.mt5_connector import get_mt5_connector
         logger.info("📡 Starting real-time WebSocket market streamer")
-        mt5 = MT5Connector()
+        mt5 = get_mt5_connector()
         while True:
             try:
                 clients = globals().get("connected_clients", set())

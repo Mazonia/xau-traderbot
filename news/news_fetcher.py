@@ -144,7 +144,7 @@ class NewsFetcher:
     async def fetch_alpha_vantage_news(
         self,
         topics: str = "economy_macro,monetary_policy",
-        tickers: str = "FOREX:XAU",
+        tickers: str = "GLD",
     ) -> list[dict]:
         """
         Fetch news sentiment from Alpha Vantage.

@@ -66,6 +66,7 @@ class MT5Connector:
     def __init__(self):
         self.settings = get_settings()
         self._connected = False
+        self._has_logged_connect = False
         self._max_retries = 5
         self._retry_delay = 5  # seconds
         self._lock = threading.RLock()  # Thread-safe MT5 IPC mutex
@@ -80,6 +81,9 @@ class MT5Connector:
         Returns:
             True if connected successfully, False otherwise.
         """
+        if self.is_connected():
+            return True
+
         retries = max_retries if max_retries is not None else self._max_retries
         delay = retry_delay if retry_delay is not None else self._retry_delay
         for attempt in range(1, retries + 1):
@@ -108,16 +112,18 @@ class MT5Connector:
                 self._connected = True
                 account_info = mt5.account_info()
 
-                if account_info:
-                    logger.success(
-                        f"Connected to MT5 | "
-                        f"Account: {account_info.login} | "
-                        f"Server: {account_info.server} | "
-                        f"Balance: ${account_info.balance:,.2f} | "
-                        f"Leverage: 1:{account_info.leverage}"
-                    )
-                else:
-                    logger.success("Connected to MT5 (account info unavailable)")
+                if not self._has_logged_connect:
+                    self._has_logged_connect = True
+                    if account_info:
+                        logger.success(
+                            f"Connected to MT5 | "
+                            f"Account: {account_info.login} | "
+                            f"Server: {account_info.server} | "
+                            f"Balance: ${account_info.balance:,.2f} | "
+                            f"Leverage: 1:{account_info.leverage}"
+                        )
+                    else:
+                        logger.success("Connected to MT5 (account info unavailable)")
 
                 return True
 
@@ -811,3 +817,17 @@ class MT5Connector:
         except Exception as e:
             logger.error(f"Error fetching MT5 historical trades: {e}")
             return []
+
+
+_shared_connector: Optional[MT5Connector] = None
+_connector_lock = threading.Lock()
+
+
+def get_mt5_connector() -> MT5Connector:
+    """Get or initialize shared MT5Connector singleton instance."""
+    global _shared_connector
+    if _shared_connector is None:
+        with _connector_lock:
+            if _shared_connector is None:
+                _shared_connector = MT5Connector()
+    return _shared_connector

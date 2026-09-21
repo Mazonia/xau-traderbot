@@ -221,6 +221,9 @@ class PricePredictor:
             logger.info("LSTM model loaded successfully")
             return True
 
+        except ModuleNotFoundError:
+            logger.info("TensorFlow not installed — optional LSTM price predictor disabled (using XGBoost SignalClassifier)")
+            return False
         except Exception as e:
             logger.error(f"Failed to load LSTM model: {e}")
             return False
