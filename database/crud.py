@@ -170,6 +170,20 @@ def get_trade_stats(days: int = 30) -> dict:
             .all()
         )
 
+        now_utc = datetime.now(timezone.utc)
+        today_start = now_utc.replace(hour=0, minute=0, second=0, microsecond=0)
+        
+        def is_today(closed_dt):
+            if not closed_dt:
+                return False
+            # Normalize to offset-aware UTC
+            if closed_dt.tzinfo is None:
+                closed_dt = closed_dt.replace(tzinfo=timezone.utc)
+            return closed_dt >= today_start
+
+        today_trades = [t for t in trades if is_today(t.closed_at)]
+        today_realized_profit = sum(t.profit for t in today_trades if t.profit is not None)
+
         if not trades:
             return {
                 "total_trades": 0,
@@ -177,6 +191,7 @@ def get_trade_stats(days: int = 30) -> dict:
                 "losing_trades": 0,
                 "win_rate": 0.0,
                 "total_profit": 0.0,
+                "today_realized_profit": 0.0,
                 "avg_profit": 0.0,
                 "avg_loss": 0.0,
                 "profit_factor": 0.0,
@@ -187,21 +202,82 @@ def get_trade_stats(days: int = 30) -> dict:
         winners = [t for t in trades if t.profit and t.profit > 0]
         losers = [t for t in trades if t.profit and t.profit < 0]
 
-        total_wins = sum(t.profit for t in winners) if winners else 0
-        total_losses = abs(sum(t.profit for t in losers)) if losers else 0
+        total_wins = sum(t.profit for t in winners) if winners else 0.0
+        total_losses = abs(sum(t.profit for t in losers)) if losers else 0.0
+        total_profit = sum(t.profit for t in trades if t.profit is not None)
+
+        # Ensure profit_factor is JSON serializable (never inf)
+        if total_losses > 0:
+            pf = round(total_wins / total_losses, 2)
+        elif total_wins > 0:
+            pf = round(min(99.9, total_wins), 2)
+        else:
+            pf = 0.0
 
         return {
             "total_trades": len(trades),
             "winning_trades": len(winners),
             "losing_trades": len(losers),
-            "win_rate": (len(winners) / len(trades) * 100) if trades else 0,
-            "total_profit": sum(t.profit for t in trades),
-            "avg_profit": total_wins / len(winners) if winners else 0,
-            "avg_loss": total_losses / len(losers) if losers else 0,
-            "profit_factor": total_wins / total_losses if total_losses > 0 else float("inf"),
-            "largest_win": max((t.profit for t in winners), default=0),
-            "largest_loss": min((t.profit for t in losers), default=0),
+            "win_rate": round((len(winners) / len(trades) * 100), 1) if trades else 0.0,
+            "total_profit": round(total_profit, 2),
+            "today_realized_profit": round(today_realized_profit, 2),
+            "avg_profit": round(total_wins / len(winners), 2) if winners else 0.0,
+            "avg_loss": round(total_losses / len(losers), 2) if losers else 0.0,
+            "profit_factor": pf,
+            "largest_win": round(max((t.profit for t in winners), default=0.0), 2),
+            "largest_loss": round(min((t.profit for t in losers), default=0.0), 2),
         }
+    finally:
+        session.close()
+
+
+def sync_mt5_deals(deals_list: list[dict]) -> int:
+    """
+    Sync closed deals from MT5 history into the SQLite database.
+    Ensures every closed trade from the broker exists and is marked CLOSED with correct profit.
+    """
+    if not deals_list:
+        return 0
+    session = get_session()
+    synced_count = 0
+    try:
+        for t in deals_list:
+            ticket = t.get("ticket")
+            if not ticket:
+                continue
+            existing = session.query(Trade).filter(Trade.ticket == ticket).first()
+            if existing:
+                existing.exit_price = t.get("exit_price", existing.exit_price)
+                existing.profit = t.get("profit", existing.profit)
+                existing.swap = t.get("swap", existing.swap)
+                existing.commission = t.get("commission", existing.commission)
+                existing.status = "CLOSED"
+                if t.get("closed_at"):
+                    existing.closed_at = t.get("closed_at")
+            else:
+                trade = Trade(
+                    ticket=ticket,
+                    order_type=t.get("type", "BUY"),
+                    strategy=t.get("strategy", "MT5_SYNC"),
+                    volume=t.get("volume", 0.01),
+                    entry_price=t.get("entry_price", 0.0),
+                    exit_price=t.get("exit_price", 0.0),
+                    profit=t.get("profit", 0.0),
+                    swap=t.get("swap", 0.0),
+                    commission=t.get("commission", 0.0),
+                    status="CLOSED",
+                    opened_at=t.get("opened_at"),
+                    closed_at=t.get("closed_at"),
+                    comment=t.get("comment", ""),
+                )
+                session.add(trade)
+            synced_count += 1
+        session.commit()
+        return synced_count
+    except Exception as e:
+        session.rollback()
+        logger.error(f"Error syncing MT5 deals into SQLite: {e}")
+        return 0
     finally:
         session.close()
 

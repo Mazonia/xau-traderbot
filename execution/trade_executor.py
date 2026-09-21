@@ -300,7 +300,7 @@ class TradeExecutor:
                 )
                 closed_events.append({
                     "ticket": trade.ticket,
-                    "symbol": trade.symbol,
+                    "symbol": getattr(trade, "symbol", "XAUUSD"),
                     "direction": trade.order_type,
                     "entry_price": trade.entry_price,
                     "exit_price": exit_price,
@@ -309,6 +309,14 @@ class TradeExecutor:
                     "commission": commission,
                     "reason": reason,
                 })
+
+        # Also sync any closed deals directly from MT5 broker history
+        try:
+            historical_deals = self.mt5.get_historical_trades(days=7)
+            if historical_deals:
+                crud.sync_mt5_deals(historical_deals)
+        except Exception as e:
+            logger.debug(f"Error syncing historical deals in sync_positions: {e}")
 
         return closed_events
 

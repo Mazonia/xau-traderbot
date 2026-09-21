@@ -56,7 +56,7 @@ async def index():
 
 @app.get("/api/account")
 async def get_account():
-    """Get current account info (fast non-blocking with credential masking)."""
+    """Get current account info (fast non-blocking with credential masking and today's P&L)."""
     try:
         from core.mt5_connector import MT5Connector
         mt5 = MT5Connector()
@@ -67,6 +67,15 @@ async def get_account():
                 login_str = str(sanitized_info.get("login", ""))
                 sanitized_info["login"] = f"***{login_str[-4:]}" if len(login_str) >= 4 else "***"
                 sanitized_info["connected"] = True
+
+                # Realized & Net P&L metrics
+                stats = crud.get_trade_stats(days=30)
+                realized_today = stats.get("today_realized_profit", 0.0)
+                floating = float(sanitized_info.get("profit", 0.0))
+                sanitized_info["realized_today"] = round(realized_today, 2)
+                sanitized_info["floating_profit"] = round(floating, 2)
+                sanitized_info["net_pnl_today"] = round(realized_today + floating, 2)
+
                 return JSONResponse(sanitized_info)
         return JSONResponse({"connected": False, "status": "MT5 Terminal Offline"})
     except Exception as e:
@@ -92,7 +101,18 @@ async def get_positions():
 
 @app.get("/api/trades")
 async def get_trades():
-    """Get recent trade history."""
+    """Get recent trade history, auto-syncing latest broker deals from MT5."""
+    try:
+        from core.mt5_connector import MT5Connector
+        mt5 = MT5Connector()
+        if mt5.connect(max_retries=1, retry_delay=0.1):
+            deals = mt5.get_historical_trades(days=30)
+            if deals:
+                crud.sync_mt5_deals(deals)
+            mt5.disconnect()
+    except Exception as e:
+        logger.debug(f"Error during /api/trades MT5 sync: {e}")
+
     trades = crud.get_recent_trades(limit=50)
     return JSONResponse([
         {
@@ -109,6 +129,7 @@ async def get_trades():
             "confluence": t.confluence_score,
             "opened_at": t.opened_at.isoformat() if t.opened_at else None,
             "closed_at": t.closed_at.isoformat() if t.closed_at else None,
+            "comment": t.comment,
         }
         for t in trades
     ])
@@ -254,12 +275,19 @@ async def get_sentiment_overview():
 
 @app.post("/api/close-position/{ticket}")
 async def close_position(ticket: int):
-    """Close a specific open position."""
+    """Close a specific open position and sync deals immediately."""
     try:
         from core.mt5_connector import MT5Connector
+        import asyncio
         mt5 = MT5Connector()
         if mt5.connect(max_retries=1, retry_delay=0.1):
             success = mt5.close_position(ticket)
+            if success:
+                await asyncio.sleep(0.4)
+                deals = mt5.get_historical_trades(days=7)
+                if deals:
+                    crud.sync_mt5_deals(deals)
+            mt5.disconnect()
             return JSONResponse({"success": success, "ticket": ticket})
         return JSONResponse({"success": False, "error": "MT5 offline"}, status_code=500)
     except Exception as e:
@@ -269,12 +297,19 @@ async def close_position(ticket: int):
 
 @app.post("/api/close-all")
 async def close_all_positions():
-    """Emergency close all open positions."""
+    """Emergency close all open positions and sync deals immediately."""
     try:
         from core.mt5_connector import MT5Connector
+        import asyncio
         mt5 = MT5Connector()
         if mt5.connect(max_retries=1, retry_delay=0.1):
             closed_count = mt5.close_all_positions()
+            if closed_count > 0:
+                await asyncio.sleep(0.5)
+                deals = mt5.get_historical_trades(days=7)
+                if deals:
+                    crud.sync_mt5_deals(deals)
+            mt5.disconnect()
             return JSONResponse({"success": True, "closed_count": closed_count})
         return JSONResponse({"success": False, "error": "MT5 offline"}, status_code=500)
     except Exception as e:
@@ -467,6 +502,7 @@ async def start_realtime_streamer():
     """Background task to broadcast real-time price updates to WebSocket subscribers."""
     import asyncio
     async def stream_loop():
+        global connected_clients
         from core.mt5_connector import MT5Connector
         logger.info("📡 Starting real-time WebSocket market streamer")
         mt5 = MT5Connector()

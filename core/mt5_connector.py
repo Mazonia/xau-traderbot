@@ -734,23 +734,80 @@ class MT5Connector:
             return None
         try:
             from datetime import timedelta
-            now = datetime.now(timezone.utc)
-            from_date = now - timedelta(days=7)
+            now = datetime.now() + timedelta(days=2)
+            from_date = now - timedelta(days=30)
             deals = mt5.history_deals_get(from_date, now, position=ticket)
             if deals and len(deals) > 0:
-                close_deal = deals[-1]
+                close_deal = None
                 for d in reversed(deals):
-                    if hasattr(d, "entry") and d.entry == mt5.DEAL_ENTRY_OUT:
+                    if hasattr(d, "entry") and d.entry == 1 and getattr(d, "position_id", 0) == ticket:
                         close_deal = d
                         break
-                return {
-                    "exit_price": float(close_deal.price),
-                    "profit": float(close_deal.profit),
-                    "swap": float(close_deal.swap),
-                    "commission": float(close_deal.commission),
-                    "comment": str(close_deal.comment),
-                    "time": datetime.fromtimestamp(close_deal.time, tz=timezone.utc),
-                }
+                if close_deal:
+                    return {
+                        "exit_price": float(close_deal.price),
+                        "profit": float(close_deal.profit),
+                        "swap": float(close_deal.swap),
+                        "commission": float(close_deal.commission),
+                        "comment": str(close_deal.comment),
+                        "time": datetime.fromtimestamp(close_deal.time, tz=timezone.utc),
+                    }
         except Exception as e:
             logger.debug(f"Could not fetch history deal for position #{ticket}: {e}")
         return None
+
+    def get_historical_trades(self, days: int = 30) -> list[dict]:
+        """
+        Fetch complete closed trades from MT5 deal history reconstructed by position_id.
+        Pairs DEAL_ENTRY_IN (0) and DEAL_ENTRY_OUT (1) into unified trade records.
+        """
+        if not self.ensure_connected():
+            return []
+        try:
+            from datetime import timedelta
+            now = datetime.now() + timedelta(days=2)
+            from_date = now - timedelta(days=days)
+            deals = mt5.history_deals_get(from_date, now)
+            if not deals:
+                return []
+
+            positions_map = {}
+            for d in deals:
+                if not d.symbol:
+                    continue
+                pos_id = d.position_id
+                if pos_id not in positions_map:
+                    positions_map[pos_id] = {"in": None, "out": None}
+                if d.entry == 0:  # DEAL_ENTRY_IN
+                    positions_map[pos_id]["in"] = d
+                elif d.entry == 1:  # DEAL_ENTRY_OUT
+                    positions_map[pos_id]["out"] = d
+
+            closed_trades = []
+            for pos_id, parts in positions_map.items():
+                in_d = parts["in"]
+                out_d = parts["out"]
+                if in_d and out_d:
+                    order_type = "BUY" if in_d.type == 0 else "SELL"
+                    opened_at = datetime.fromtimestamp(in_d.time, tz=timezone.utc)
+                    closed_at = datetime.fromtimestamp(out_d.time, tz=timezone.utc)
+                    closed_trades.append({
+                        "ticket": pos_id,
+                        "symbol": in_d.symbol,
+                        "type": order_type,
+                        "volume": in_d.volume,
+                        "entry_price": float(in_d.price),
+                        "exit_price": float(out_d.price),
+                        "profit": round(float(out_d.profit), 2),
+                        "swap": round(float(out_d.swap), 2),
+                        "commission": round(float(out_d.commission), 2),
+                        "comment": str(out_d.comment or in_d.comment or ""),
+                        "opened_at": opened_at,
+                        "closed_at": closed_at,
+                        "status": "CLOSED",
+                    })
+            closed_trades.sort(key=lambda x: x["closed_at"], reverse=True)
+            return closed_trades
+        except Exception as e:
+            logger.error(f"Error fetching MT5 historical trades: {e}")
+            return []

@@ -458,11 +458,20 @@ async function refreshAccount() {
     setText('leverage-val', `1:${data.leverage || 100}`);
     setText('server-val', data.server || 'MetaQuotes-Demo');
 
-    const pnl = data.profit || 0;
+    // Realized & Net P&L metrics
+    const netPnl = data.net_pnl_today !== undefined ? data.net_pnl_today : (data.profit || 0);
+    const realized = data.realized_today !== undefined ? data.realized_today : 0;
+    const floating = data.floating_profit !== undefined ? data.floating_profit : (data.profit || 0);
+
     const pnlEl = document.getElementById('daily-pnl');
     if (pnlEl) {
-        pnlEl.textContent = formatCurrency(pnl, true);
-        pnlEl.className = 'kpi-num ' + (pnl >= 0 ? 'profit' : 'loss');
+        pnlEl.textContent = formatCurrency(netPnl, true);
+        pnlEl.className = `kpi-num ${netPnl >= 0 ? 'profit' : 'loss'}`;
+    }
+
+    const statusSub = document.getElementById('floating-status');
+    if (statusSub) {
+        statusSub.textContent = `Closed: ${formatCurrency(realized, true)} | Float: ${formatCurrency(floating, true)}`;
     }
 }
 
@@ -669,19 +678,25 @@ async function refreshTrades() {
 
     tbody.innerHTML = data.slice(0, 25).map(trade => {
         const typeClass = (trade.type || '').toLowerCase();
-        const profitClass = (trade.profit || 0) >= 0 ? 'profit' : 'loss';
-        const time = trade.opened_at ? new Date(trade.opened_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '—';
+        const profit = trade.profit || 0;
+        const profitClass = profit >= 0 ? 'profit' : 'loss';
+        const displayTime = trade.closed_at
+            ? new Date(trade.closed_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+            : (trade.opened_at ? new Date(trade.opened_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '—');
+        const entryPrice = trade.entry ? `$${trade.entry.toFixed(2)}` : '—';
+        const exitPrice = trade.exit ? `$${trade.exit.toFixed(2)}` : '—';
+        const strategyTag = trade.comment ? trade.comment : (trade.strategy || 'QUANT_AUTO');
 
         return `
             <tr>
-                <td>${time}</td>
+                <td>${displayTime}</td>
                 <td><span class="type-pill ${typeClass}">${trade.type}</span></td>
-                <td>${trade.strategy || 'Auto-AI'}</td>
-                <td>$${trade.entry?.toFixed(2) || '—'}</td>
-                <td>$${trade.exit?.toFixed(2) || '—'}</td>
+                <td>${strategyTag}</td>
+                <td>${entryPrice}</td>
+                <td>${exitPrice}</td>
                 <td>${trade.volume?.toFixed(2) || '—'}</td>
-                <td class="pnl-cell ${profitClass}">${formatCurrency(trade.profit || 0, true)}</td>
-                <td>${trade.confluence ? trade.confluence.toFixed(0) + '/100' : '—'}</td>
+                <td class="pnl-cell ${profitClass}"><strong>${formatCurrency(profit, true)}</strong></td>
+                <td><span class="status-pill-sm ${trade.status?.toLowerCase() || 'closed'}">${trade.status || 'CLOSED'}</span></td>
             </tr>
         `;
     }).join('');
@@ -693,7 +708,9 @@ async function refreshStats() {
     if (!data) return;
 
     setText('win-rate', `${(data.win_rate || 0).toFixed(1)}%`);
-    setText('total-trades-sub', `${data.total_trades || 0} Closed Trades`);
+    const count = data.total_trades || 0;
+    const tradeText = count === 1 ? '1 Closed Trade' : `${count} Closed Trades`;
+    setText('total-trades-sub', tradeText);
     setText('profit-factor', (data.profit_factor || 0).toFixed(2));
 }
 
