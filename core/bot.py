@@ -85,11 +85,13 @@ class TradingBot:
         self.news_analyzer = NewsAnalyzer()
 
         # ── Notifications ────────────────────────────────────────────────
-        self.telegram = TelegramNotifier()
+        self.telegram = TelegramNotifier(bot_instance=self)
 
         # ── State ────────────────────────────────────────────────────────
         self._cycle_count = 0
         self._last_news_check: Optional[datetime] = None
+        self._last_regime = None
+        self._trading_paused = False
 
     def _setup_logging(self):
         """Configure loguru logging."""
@@ -158,6 +160,9 @@ class TradingBot:
             f"Mode: {mode}\nBalance: {balance_str}\nSymbol: XAUUSD"
         )
 
+        # Start interactive 2-way Telegram polling in background
+        await self.telegram.start_polling()
+
         # Register shutdown handlers
         self._running = True
 
@@ -176,6 +181,7 @@ class TradingBot:
         """Gracefully stop the bot."""
         logger.info("Shutting down...")
         self._running = False
+        await self.telegram.stop_polling()
         self.mt5.disconnect()
         logger.info("Bot stopped successfully")
 
@@ -213,6 +219,7 @@ class TradingBot:
                 df_h4_analyzed = self.technical.add_all_indicators(df_h4.copy()) if df_h4 is not None else None
                 if df_h4_analyzed is not None:
                     regime = self.regime_detector.analyze(df_h4_analyzed)
+                    self._last_regime = regime
                 else:
                     regime = None
 
@@ -229,7 +236,11 @@ class TradingBot:
                 best_signal = None
                 best_confluence = None
 
-                for strategy_name, strategy in self.strategies.items():
+                # Skip strategy execution if paused via Telegram remote control
+                if getattr(self, "_trading_paused", False):
+                    best_signal = None
+                else:
+                    for strategy_name, strategy in self.strategies.items():
                     if not strategy.enabled:
                         continue
 
