@@ -568,7 +568,7 @@ async def websocket_endpoint(websocket: WebSocket):
             if data == "ping":
                 await websocket.send_text(json.dumps({"type": "pong"}))
 
-    except WebSocketDisconnect:
+    except (WebSocketDisconnect, Exception):
         connected_clients.discard(websocket)
         logger.info(f"WebSocket client disconnected ({len(connected_clients)} total)")
 
