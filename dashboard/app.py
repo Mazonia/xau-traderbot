@@ -496,6 +496,19 @@ async def get_market_barometer():
             if range_span > 0:
                 pct_in_range = max(0.0, min(100.0, ((current_price - low_24h) / range_span) * 100.0))
 
+            # Temporal Self-Attention and Candle Physics (MetaQuotes Neural Net Book)
+            attention_conc = 0.0
+            anchor_type = "PIVOT"
+            if df_h1 is not None and len(df_h1) >= 20:
+                try:
+                    from ai.attention_scorer import AttentionMarketScorer
+                    scorer = AttentionMarketScorer(window=20)
+                    att_res = scorer.compute_attention(df_h1)
+                    attention_conc = round(att_res.get("concentration", 0.0), 1)
+                    anchor_type = att_res.get("anchor_type", "PIVOT")
+                except Exception:
+                    pass
+
             return JSONResponse({
                 "success": True,
                 "current_price": current_price,
@@ -506,6 +519,8 @@ async def get_market_barometer():
                 "pct_in_range": round(pct_in_range, 1),
                 "atr": atr_val,
                 "rsi": rsi_val,
+                "attention_concentration": attention_conc,
+                "anchor_type": anchor_type,
             })
         return JSONResponse({"success": False, "error": "MT5 offline"}, status_code=500)
     except Exception as e:

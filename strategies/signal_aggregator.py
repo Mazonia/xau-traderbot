@@ -67,6 +67,7 @@ class SignalAggregator:
         ai_prediction: Optional[dict] = None,
         sentiment: Optional[dict] = None,
         regime_analysis: Optional[dict] = None,
+        attention_analysis: Optional[dict] = None,
         min_score: float = 65.0,
     ) -> ConfluenceResult:
         # Dynamically synchronize with self-learning adaptive weights
@@ -162,26 +163,54 @@ class SignalAggregator:
             regime_contrib = self.regime_weight * 0.5
             reasons.append(f"🌊 Regime: unavailable → +{regime_contrib:.1f} pts (default)")
 
+        # ── 5. Temporal Self-Attention Alignment (Book Ch. 5) ─────────────
+        attention_contrib = 0.0
+        if attention_analysis:
+            att_conc = attention_analysis.get("concentration", 0.0)
+            att_bonus = attention_analysis.get("bonus_pts", 0.0)
+            anchor_type = attention_analysis.get("anchor_type", "")
+            if abs(att_bonus) > 0.05:
+                attention_contrib = att_bonus
+                emoji = "🟢" if att_bonus > 0 else "🔴"
+                reasons.append(f"🧠 Attention: {att_conc:.0f}% focus on {anchor_type} → {emoji} {attention_contrib:+.1f} pts")
+
+        # ── Dynamic Regime & Volatility Threshold (Book Ch. 6 & 7) ───────
+        effective_min_score = min_score
+        if regime_analysis:
+            regime_name = regime_analysis.get("regime", "")
+            vol_level = regime_analysis.get("volatility", "")
+            if regime_name == "TRENDING":
+                effective_min_score -= 3.0
+                reasons.append(f"🎯 Dynamic Threshold: -3.0 pts for TRENDING momentum (Target: {effective_min_score:.1f})")
+            elif regime_name == "RANGING":
+                effective_min_score += 2.0
+                reasons.append(f"🎯 Dynamic Threshold: +2.0 pts for RANGING chop filter (Target: {effective_min_score:.1f})")
+
+            if vol_level == "HIGH":
+                effective_min_score += 4.0
+                reasons.append(f"🎯 Dynamic Threshold: +4.0 pts for HIGH VOLATILITY shield (Target: {effective_min_score:.1f})")
+
         # ── Final Score ──────────────────────────────────────────────────
-        total_score = max(0, technical_contrib + ai_contrib + sentiment_contrib + regime_contrib)
+        total_score = max(0.0, min(100.0, technical_contrib + ai_contrib + sentiment_contrib + regime_contrib + attention_contrib))
         should_execute = (
-            total_score >= min_score
+            total_score >= effective_min_score
             and strategy_signal.direction != SignalDirection.HOLD
         )
 
         if should_execute:
             reasons.append(
-                f"✅ CONFLUENCE MET: {total_score:.1f}/{min_score:.0f} — EXECUTE"
+                f"✅ CONFLUENCE MET: {total_score:.1f}/{effective_min_score:.1f} — EXECUTE"
             )
         else:
             reasons.append(
-                f"❌ CONFLUENCE NOT MET: {total_score:.1f}/{min_score:.0f} — HOLD"
+                f"❌ CONFLUENCE NOT MET: {total_score:.1f}/{effective_min_score:.1f} — HOLD"
             )
 
         logger.info(
             f"Confluence: {total_score:.1f}/100 | "
             f"Tech={technical_contrib:.1f} AI={ai_contrib:.1f} "
-            f"Sent={sentiment_contrib:.1f} Regime={regime_contrib:.1f} | "
+            f"Sent={sentiment_contrib:.1f} Regime={regime_contrib:.1f} "
+            f"Att={attention_contrib:+.1f} | Target={effective_min_score:.1f} | "
             f"Execute={should_execute}"
         )
 

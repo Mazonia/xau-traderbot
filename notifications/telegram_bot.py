@@ -594,6 +594,24 @@ class TelegramNotifier:
             )
             for s in regime.recommended_strategies:
                 msg += f"   • <code>{s.upper()}</code>\n"
+
+            # Temporal Self-Attention metrics (MetaQuotes Book Ch. 5)
+            if self.bot_instance and hasattr(self.bot_instance, "attention_scorer"):
+                try:
+                    mt5_obj = getattr(self.bot_instance, "mt5", None)
+                    if mt5_obj and mt5_obj.is_connected:
+                        df_m15 = mt5_obj.get_rates(timeframe="M15", count=25, auto_reconnect=False)
+                        if df_m15 is not None and len(df_m15) >= 20:
+                            att_prof = self.bot_instance.attention_scorer.compute_attention(df_m15)
+                            conc = att_prof.get("concentration", 0.0)
+                            anchor = att_prof.get("anchor_type", "PIVOT")
+                            msg += (
+                                f"\n🧠 <b>Temporal Self-Attention:</b>\n"
+                                f"   • Focus Concentration: <code>{conc:.1f}%</code>\n"
+                                f"   • Structural Anchor: <code>{anchor}</code>\n"
+                            )
+                except Exception:
+                    pass
         else:
             msg += "<i>MT5 offline or H4 candle data unavailable. Ensure MT5 is running on your desktop.</i>\n"
 

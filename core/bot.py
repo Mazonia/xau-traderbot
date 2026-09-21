@@ -81,6 +81,8 @@ class TradingBot:
         # ── AI & Self-Learning ───────────────────────────────────────────
         self.price_predictor = PricePredictor()
         self.signal_classifier = SignalClassifier()
+        from ai.attention_scorer import AttentionMarketScorer
+        self.attention_scorer = AttentionMarketScorer(window=25)
         from ai.trade_learner import trade_learner
         self.trade_learner = trade_learner
 
@@ -301,7 +303,13 @@ class TradingBot:
                         if not signal.is_actionable:
                             continue
 
-                        # Calculate confluence
+                        # Compute temporal self-attention alignment (Book Ch. 5)
+                        attention_analysis = self.attention_scorer.analyze_alignment(
+                            df=df,
+                            signal_direction=signal.direction.value,
+                        )
+
+                        # Calculate confluence with dynamic regime and attention
                         confluence = self.signal_aggregator.calculate_confluence(
                             strategy_signal=signal,
                             ai_prediction=ai_prediction,
@@ -309,7 +317,11 @@ class TradingBot:
                             regime_analysis={
                                 "is_recommended": True,
                                 "position_modifier": regime.position_size_modifier if regime else 1.0,
+                                "regime": regime.regime.value if regime else "RANGING",
+                                "adx": regime.adx if regime else 15.0,
+                                "volatility": regime.volatility_level if regime else "NORMAL",
                             },
+                            attention_analysis=attention_analysis,
                             min_score=strategy.min_confluence_score,
                         )
 

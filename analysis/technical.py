@@ -556,10 +556,38 @@ class TechnicalAnalyzer:
             df["ema_stack_bearish"] = ((df["ema_20"] < df["ema_50"]) & (df["ema_50"] < df["ema_200"])).astype(float)
 
         # 4. ATR Volatility Expansion Ratio
+        candle_range = (df["high"] - df["low"]).replace(0, 1e-6)
         if "atr" in df.columns:
-            candle_range = df["high"] - df["low"]
             df["atr_expansion"] = candle_range / df["atr"].replace(0, np.nan)
         else:
             df["atr_expansion"] = 1.0
+
+        # 5. Candlestick Anatomy & Physics (MetaQuotes Neural Networks Book Ch. 3.3)
+        body_abs = (df["close"] - df["open"]).abs()
+        df["candle_body_ratio"] = body_abs / candle_range
+
+        # Upper wick rejection ratio (rejection at highs)
+        upper_wick = df["high"] - np.maximum(df["open"], df["close"])
+        df["upper_wick_ratio"] = upper_wick / candle_range
+
+        # Lower wick absorption ratio (absorption at lows)
+        lower_wick = np.minimum(df["open"], df["close"]) - df["low"]
+        df["lower_wick_ratio"] = lower_wick / candle_range
+
+        # Directional candle conviction: +body_ratio for bullish candle, -body_ratio for bearish candle
+        df["candle_conviction"] = np.where(df["close"] >= df["open"], df["candle_body_ratio"], -df["candle_body_ratio"])
+
+        # 6. Normalized Log Return Z-Score (Rolling 20-period Stationarity)
+        if "log_returns" in df.columns:
+            rolling_mean = df["log_returns"].rolling(20).mean()
+            rolling_std = df["log_returns"].rolling(20).std().replace(0, 1e-6)
+            df["log_return_zscore_20"] = (df["log_returns"] - rolling_mean) / rolling_std
+
+        # 7. Volume Intensity & Effort-vs-Result (Wyckoff Price-Volume Physics)
+        if "volume" in df.columns:
+            vol_sma20 = df["volume"].rolling(20).mean().replace(0, 1e-6)
+            df["volume_intensity"] = df["volume"] / vol_sma20
+            # Effort vs result: range expansion divided by volume intensity
+            df["effort_result_ratio"] = (candle_range / df["close"]) / df["volume_intensity"].replace(0, 1e-6)
 
         return df
