@@ -15,9 +15,12 @@ from typing import Optional
 import httpx
 import re
 
-def _sanitize_log(msg: str) -> str:
-    """Mask API tokens from URLs and error tracebacks."""
-    return re.sub(r'([?&](?:token|apikey|api_key)=)[^&\s]+', r'\1***REDACTED***', str(msg))
+def _sanitize_log(msg: str, key: str = "") -> str:
+    """Mask API tokens from URLs, error tracebacks, and API response strings."""
+    cleaned = re.sub(r'([?&](?:token|apikey|api_key)=)[^&\s]+', r'\1***REDACTED***', str(msg))
+    if key and len(key) >= 4:
+        cleaned = cleaned.replace(key, "***API_KEY***")
+    return cleaned
 
 from loguru import logger
 
@@ -184,11 +187,11 @@ class NewsFetcher:
 
             feed = data.get("feed", [])
             if "Note" in data:
-                logger.warning(f"Alpha Vantage rate limit reached: {data['Note'][:100]}... Backing off 15m.")
+                logger.warning(_sanitize_log(f"Alpha Vantage rate limit reached: {data['Note'][:100]}... Backing off 15m.", self.alpha_vantage_key))
                 self._alpha_vantage_cooldown_until = datetime.now(timezone.utc) + timedelta(minutes=15)
                 return []
             if "Information" in data:
-                logger.warning(f"Alpha Vantage notice: {data['Information'][:100]}... Backing off 15m.")
+                logger.warning(_sanitize_log(f"Alpha Vantage notice: {data['Information'][:100]}... Backing off 15m.", self.alpha_vantage_key))
                 self._alpha_vantage_cooldown_until = datetime.now(timezone.utc) + timedelta(minutes=15)
                 return []
             relevant = []
