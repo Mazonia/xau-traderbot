@@ -30,19 +30,86 @@ class RiskManager:
 
     def __init__(self, mt5: MT5Connector):
         self.mt5 = mt5
-        settings = get_settings()
-        params = settings.risk_params
-
-        self.max_risk_pct = params.get("max_risk_per_trade_pct", 3.0)
-        self.max_daily_loss_pct = params.get("max_daily_loss_pct", 5.0)
-        self.max_concurrent = params.get("max_concurrent_trades", 3)
-        self.min_free_margin_pct = params.get("min_free_margin_pct", 50.0)
-        self.max_spread = params.get("max_spread_points", 40)
-        self.default_lot = params.get("default_lot_size", 0.01)
-        self.max_lot = params.get("max_lot_size", 1.0)
-
+        self._last_active_mode: Optional[str] = get_settings().active_mode
+        self._max_risk_pct_override: Optional[float] = None
+        self._default_lot_override: Optional[float] = None
+        self._max_spread_override: Optional[float] = None
+        self._max_concurrent_override: Optional[int] = None
         self._daily_loss_triggered = False
         self._last_reset_date = None
+
+    def _check_mode_sync(self):
+        """Ensure overrides are reset if the trading mode changes."""
+        current_mode = get_settings().active_mode
+        if getattr(self, "_last_active_mode", None) != current_mode:
+            self._last_active_mode = current_mode
+            self._max_risk_pct_override = None
+            self._default_lot_override = None
+            self._max_spread_override = None
+            self._max_concurrent_override = None
+
+    def clear_overrides(self):
+        """Explicitly clear all temporary runtime overrides."""
+        self._max_risk_pct_override = None
+        self._default_lot_override = None
+        self._max_spread_override = None
+        self._max_concurrent_override = None
+
+    @property
+    def max_risk_pct(self) -> float:
+        self._check_mode_sync()
+        if self._max_risk_pct_override is not None:
+            return self._max_risk_pct_override
+        return float(get_settings().risk_params.get("max_risk_per_trade_pct", 2.5))
+
+    @max_risk_pct.setter
+    def max_risk_pct(self, val: float):
+        self._max_risk_pct_override = val
+
+    @property
+    def max_daily_loss_pct(self) -> float:
+        return float(get_settings().risk_params.get("max_daily_loss_pct", 5.0))
+
+    @property
+    def max_concurrent(self) -> int:
+        self._check_mode_sync()
+        if self._max_concurrent_override is not None:
+            return self._max_concurrent_override
+        return int(get_settings().risk_params.get("max_concurrent_trades", 4))
+
+    @max_concurrent.setter
+    def max_concurrent(self, val: int):
+        self._max_concurrent_override = val
+
+    @property
+    def min_free_margin_pct(self) -> float:
+        return float(get_settings().risk_params.get("min_free_margin_pct", 50.0))
+
+    @property
+    def max_spread(self) -> float:
+        self._check_mode_sync()
+        if self._max_spread_override is not None:
+            return self._max_spread_override
+        return float(get_settings().risk_params.get("max_spread_points", 70.0))
+
+    @max_spread.setter
+    def max_spread(self, val: float):
+        self._max_spread_override = val
+
+    @property
+    def default_lot(self) -> float:
+        self._check_mode_sync()
+        if self._default_lot_override is not None:
+            return self._default_lot_override
+        return float(get_settings().risk_params.get("default_lot_size", 0.02))
+
+    @default_lot.setter
+    def default_lot(self, val: float):
+        self._default_lot_override = val
+
+    @property
+    def max_lot(self) -> float:
+        return float(get_settings().risk_params.get("max_lot_size", 0.10))
 
     def can_trade(self, symbol: str | None = None) -> tuple[bool, str]:
         """
@@ -83,8 +150,11 @@ class RiskManager:
             return False, f"Max concurrent trades reached ({len(open_positions)}/{self.max_concurrent})"
 
         # 3. Free margin check
+        margin = float(account.get("margin", 0.0) or 0.0)
         margin_level = account.get("margin_level")
-        if margin_level is not None and margin_level < self.min_free_margin_pct:
+        # In MetaTrader 5, margin_level is 0.0 when no positions are open (margin == 0).
+        # Only evaluate margin_level if margin > 0.
+        if margin > 0 and margin_level is not None and margin_level < self.min_free_margin_pct:
             return False, f"Margin level too low ({margin_level:.1f}% < {self.min_free_margin_pct}%)"
 
         free_margin = account.get("free_margin", account.get("margin_free", balance))

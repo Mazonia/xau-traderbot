@@ -71,9 +71,82 @@ class BaseStrategy(ABC):
         self.name = name
         self.params = params
         self.enabled = params.get("enabled", True)
-        self.min_confluence_score = params.get("min_confluence_score", 65)
-        self.active_sessions = params.get("active_sessions", [])
+        self._last_active_mode: Optional[str] = None
+        self._min_confluence_score_override: Optional[float] = None
+        self._default_sessions = params.get("active_sessions", [])
         self._last_signal: Optional[TradingSignal] = None
+
+    def _check_mode_sync(self):
+        """Ensure overrides are reset if the trading mode changes."""
+        try:
+            from config.settings import get_settings
+            current_mode = get_settings().active_mode
+            if getattr(self, "_last_active_mode", None) != current_mode:
+                self._last_active_mode = current_mode
+                self._min_confluence_score_override = None
+        except Exception:
+            pass
+
+    def clear_overrides(self):
+        """Explicitly clear temporary confluence overrides."""
+        self._min_confluence_score_override = None
+
+    @property
+    def min_confluence_score(self) -> float:
+        self._check_mode_sync()
+        if self._min_confluence_score_override is not None:
+            return self._min_confluence_score_override
+        try:
+            from config.settings import get_settings
+            settings = get_settings()
+            if self.name == "scalping":
+                return float(settings.scalping_params.get("min_confluence_score", 50.0))
+            elif self.name == "day_trading":
+                return float(settings.day_trading_params.get("min_confluence_score", 55.0))
+            elif self.name == "swing_trading":
+                return float(settings.swing_trading_params.get("min_confluence_score", 60.0))
+        except Exception:
+            pass
+        return float(self.params.get("min_confluence_score", 65.0))
+
+    @min_confluence_score.setter
+    def min_confluence_score(self, val: float):
+        self._min_confluence_score_override = val
+
+    @property
+    def active_sessions(self) -> list[str]:
+        try:
+            from config.settings import get_settings
+            settings = get_settings()
+            if self.name == "scalping":
+                return settings.scalping_params.get("active_sessions", self._default_sessions)
+            elif self.name == "day_trading":
+                return settings.day_trading_params.get("active_sessions", self._default_sessions)
+            elif self.name == "swing_trading":
+                return settings.swing_trading_params.get("active_sessions", self._default_sessions)
+        except Exception:
+            pass
+        return self._default_sessions
+
+    @active_sessions.setter
+    def active_sessions(self, val: list[str]):
+        self._default_sessions = val
+
+    @property
+    def min_technical_score(self) -> float:
+        """Threshold for the strategy itself to emit a directional signal instead of HOLD."""
+        try:
+            from config.settings import get_settings
+            settings = get_settings()
+            if self.name == "scalping":
+                return float(settings.scalping_params.get("min_technical_score", 35.0))
+            elif self.name == "day_trading":
+                return float(settings.day_trading_params.get("min_technical_score", 35.0))
+            elif self.name == "swing_trading":
+                return float(settings.swing_trading_params.get("min_technical_score", 35.0))
+        except Exception:
+            pass
+        return 35.0
 
     @abstractmethod
     def analyze(self, df: pd.DataFrame) -> dict:

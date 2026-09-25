@@ -164,6 +164,11 @@ class TelegramNotifier:
             else InlineKeyboardButton("⏸️ Pause Trading", callback_data="cb_pause")
         )
 
+        curr_mode = self.settings.active_mode.upper()
+        mode_icons = {"SAFE": "🛡️", "MODERATE": "⚖️", "AGGRESSIVE": "⚡"}
+        icon = mode_icons.get(curr_mode, "🎛️")
+        mode_btn = InlineKeyboardButton(f"{icon} Mode: {curr_mode}", callback_data="cb_mode_menu")
+
         keyboard = [
             [
                 InlineKeyboardButton("📊 Status & Balance", callback_data="cb_status"),
@@ -183,9 +188,10 @@ class TelegramNotifier:
             ],
             [
                 pause_btn,
-                InlineKeyboardButton("🔄 Refresh Menu", callback_data="cb_menu"),
+                mode_btn,
             ],
             [
+                InlineKeyboardButton("🔄 Refresh Menu", callback_data="cb_menu"),
                 InlineKeyboardButton("🛑 EMERGENCY CLOSE ALL", callback_data="cb_confirm_closeall"),
             ],
         ]
@@ -217,11 +223,16 @@ class TelegramNotifier:
             return
 
         mode = "DEMO" if self.settings.demo_mode else "LIVE"
+        active_mode = self.settings.active_mode.upper()
+        mode_icons = {"SAFE": "🛡️", "MODERATE": "⚖️", "AGGRESSIVE": "⚡"}
+        mode_icon = mode_icons.get(active_mode, "🎛️")
+
         text = (
             f"⚡ <b>XAUUSD AI TRADING BOT — COMMAND CENTER</b> ⚡\n\n"
             f"<b>Status:</b> 🟢 ONLINE ({mode})\n"
+            f"<b>Active Mode:</b> {mode_icon} <code>{active_mode}</code>\n"
             f"<b>Symbol:</b> <code>{self.settings.symbol}</code>\n"
-            f"<b>Lot Size:</b> <code>{self.settings.trading_params.get('risk', {}).get('default_lot_size', 0.02)}</code>\n"
+            f"<b>Lot Size:</b> <code>{self.settings.risk_params.get('default_lot_size', 0.02)}</code>\n"
             f"<b>Time:</b> {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')}\n\n"
             f"Tap an action button below to monitor or control your bot:"
         )
@@ -751,6 +762,109 @@ class TelegramNotifier:
 
         await self._safe_edit_or_reply(update, text=msg, reply_markup=keyboard, parse_mode="HTML")
 
+    async def _handle_mode(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle /mode [safe|moderate|aggressive] or show mode menu."""
+        if not self._is_authorized(update):
+            return
+
+        if context and context.args:
+            target_mode = context.args[0].lower().strip()
+            if target_mode in ["safe", "moderate", "aggressive"]:
+                await self._set_mode(update, target_mode)
+                return
+
+        # No arg or invalid arg: display mode selection menu
+        await self._show_mode_menu(update)
+
+    async def _set_mode(self, update: Update, target_mode: str):
+        """Apply a new trading mode and notify user."""
+        success = self.settings.set_active_mode(target_mode)
+        if success:
+            # Reset any risk manager overrides so mode defaults take effect
+            if self.bot_instance and hasattr(self.bot_instance, "risk_manager"):
+                rm = self.bot_instance.risk_manager
+                rm._max_risk_pct_override = None
+                rm._default_lot_override = None
+                rm._max_spread_override = None
+                rm._max_concurrent_override = None
+
+            mode_info = self.settings.active_mode_config
+            name = mode_info.get("name", target_mode.title())
+            desc = mode_info.get("description", "")
+            scalp_conf = mode_info.get("scalping_min_confluence", 50)
+            day_conf = mode_info.get("day_trading_min_confluence", 55)
+            risk_pct = mode_info.get("max_risk_per_trade_pct", 2.5)
+            spread = mode_info.get("max_spread_points", 70)
+            max_trades = mode_info.get("max_concurrent_trades", 4)
+            lot = mode_info.get("default_lot_size", 0.02)
+
+            msg = (
+                f"✅ <b>TRADING MODE SWITCHED</b>\n\n"
+                f"<b>Active Mode:</b> <code>{name}</code>\n"
+                f"<i>{desc}</i>\n\n"
+                f"<b>Confluence Thresholds:</b>\n"
+                f"  • Scalping (M5): <code>≥ {scalp_conf} pts</code>\n"
+                f"  • Day Trading (H1): <code>≥ {day_conf} pts</code>\n\n"
+                f"<b>Risk Parameters:</b>\n"
+                f"  • Risk Per Trade: <code>{risk_pct}%</code> (Default Lot: <code>{lot}</code>)\n"
+                f"  • Max Concurrent Trades: <code>{max_trades}</code>\n"
+                f"  • Max Spread: <code>{spread} pts</code>"
+            )
+            keyboard = InlineKeyboardMarkup([
+                [InlineKeyboardButton("🎛️ Change Mode", callback_data="cb_mode_menu")],
+                [InlineKeyboardButton("🔙 Main Menu", callback_data="cb_menu")],
+            ])
+            await self._safe_edit_or_reply(update, text=msg, reply_markup=keyboard, parse_mode="HTML")
+            logger.info(f"Trading mode switched to {target_mode.upper()} via Telegram")
+        else:
+            await self._safe_edit_or_reply(
+                update,
+                text="❌ Failed to switch mode. Valid options: <code>safe</code>, <code>moderate</code>, <code>aggressive</code>",
+                parse_mode="HTML"
+            )
+
+    async def _show_mode_menu(self, update: Update):
+        """Display interactive mode selection menu."""
+        curr_mode = self.settings.active_mode.lower()
+        mode_info = self.settings.active_mode_config
+        name = mode_info.get("name", curr_mode.title())
+        desc = mode_info.get("description", "")
+
+        msg = (
+            f"🎛️ <b>TRADING PROFILE & RISK MODES</b>\n"
+            f"{'━' * 28}\n\n"
+            f"<b>Current Active Mode:</b> <code>{name}</code>\n"
+            f"<i>{desc}</i>\n\n"
+            f"Choose a mode below to tune confirmation assurance and trade frequency in real-time:"
+        )
+
+        keyboard = InlineKeyboardMarkup([
+            [
+                InlineKeyboardButton(
+                    f"{'🔘' if curr_mode == 'safe' else '⚪'} 🛡️ Safe (Conservative)",
+                    callback_data="cb_set_mode_safe"
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    f"{'🔘' if curr_mode == 'moderate' else '⚪'} ⚖️ Moderate (Calculated Risk)",
+                    callback_data="cb_set_mode_moderate"
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    f"{'🔘' if curr_mode == 'aggressive' else '⚪'} ⚡ Aggressive (High Frequency)",
+                    callback_data="cb_set_mode_aggressive"
+                ),
+            ],
+            [
+                InlineKeyboardButton("🔄 Refresh View", callback_data="cb_mode_menu"),
+                InlineKeyboardButton("🔙 Main Menu", callback_data="cb_menu"),
+            ],
+        ])
+
+        await self._safe_edit_or_reply(update, text=msg, reply_markup=keyboard, parse_mode="HTML")
+
     async def _handle_confirm_closeall(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Prompt confirmation for emergency close all."""
         if not self._is_authorized(update):
@@ -1026,6 +1140,14 @@ class TelegramNotifier:
                 await self._handle_pause(update, context)
             elif data == "cb_resume":
                 await self._handle_resume(update, context)
+            elif data == "cb_mode_menu":
+                await self._show_mode_menu(update)
+            elif data == "cb_set_mode_safe":
+                await self._set_mode(update, "safe")
+            elif data == "cb_set_mode_moderate":
+                await self._set_mode(update, "moderate")
+            elif data == "cb_set_mode_aggressive":
+                await self._set_mode(update, "aggressive")
             elif data == "cb_confirm_closeall":
                 await self._handle_confirm_closeall(update, context)
             elif data == "cb_do_closeall":
@@ -1057,6 +1179,7 @@ class TelegramNotifier:
             # Register command handlers
             self._app.add_handler(CommandHandler(["start", "menu"], self._handle_start))
             self._app.add_handler(CommandHandler("status", self._handle_status))
+            self._app.add_handler(CommandHandler(["mode", "setmode"], self._handle_mode))
             self._app.add_handler(CommandHandler(["positions", "pos"], self._handle_positions))
             self._app.add_handler(CommandHandler("trades", self._handle_trades))
             self._app.add_handler(CommandHandler("pnl", self._handle_pnl))

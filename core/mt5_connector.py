@@ -184,6 +184,11 @@ class MT5Connector:
         Returns:
             DataFrame with columns: time, open, high, low, close, tick_volume, spread
         """
+        # Smart detection if caller passes timeframe as the first positional argument (e.g. get_rates("M5"))
+        if symbol in TIMEFRAME_MAP and (timeframe == "H1" or timeframe not in TIMEFRAME_MAP):
+            timeframe = symbol
+            symbol = None
+
         if not self.is_connected():
             if not auto_reconnect or not self.ensure_connected(max_retries=1, retry_delay=0.1):
                 return None
@@ -476,6 +481,7 @@ class MT5Connector:
             logger.error(f"Invalid order type: {order_type}")
             return None
 
+        slippage = int(self.settings.risk_params.get("max_slippage_points", 50))
         request = {
             "action": mt5.TRADE_ACTION_DEAL,
             "symbol": symbol,
@@ -484,7 +490,7 @@ class MT5Connector:
             "price": price,
             "sl": sl,
             "tp": tp,
-            "deviation": 30,  # Max price deviation in points
+            "deviation": slippage,  # Max price deviation in points
             "magic": magic,
             "comment": comment,
             "type_time": mt5.ORDER_TIME_GTC,
@@ -562,6 +568,7 @@ class MT5Connector:
             logger.error(f"Invalid pending order type: {order_type}")
             return None
 
+        slippage = int(self.settings.risk_params.get("max_slippage_points", 50))
         request = {
             "action": mt5.TRADE_ACTION_PENDING,
             "symbol": symbol,
@@ -570,7 +577,7 @@ class MT5Connector:
             "price": round(price, 2),
             "sl": round(sl, 2) if sl else 0.0,
             "tp": round(tp, 2) if tp else 0.0,
-            "deviation": 30,
+            "deviation": slippage,
             "magic": magic,
             "comment": comment,
             "type_time": mt5.ORDER_TIME_GTC,
@@ -682,6 +689,7 @@ class MT5Connector:
             close_type = mt5.ORDER_TYPE_BUY
             price = tick.ask
 
+        slippage = int(self.settings.risk_params.get("max_slippage_points", 50))
         request = {
             "action": mt5.TRADE_ACTION_DEAL,
             "symbol": symbol,
@@ -689,7 +697,7 @@ class MT5Connector:
             "type": close_type,
             "position": ticket,
             "price": price,
-            "deviation": 30,
+            "deviation": slippage,
             "magic": position.magic,
             "comment": comment,
             "type_time": mt5.ORDER_TIME_GTC,

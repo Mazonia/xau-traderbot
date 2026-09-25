@@ -218,5 +218,19 @@ class RegimeDetector:
             logger.info("✅ News event pause DEACTIVATED — trading resumed")
 
     def is_strategy_recommended(self, strategy_name: str, regime: RegimeAnalysis) -> bool:
-        """Check if a strategy is recommended for the current regime."""
+        """Check if a strategy is recommended for the current regime based on active mode."""
+        try:
+            from config.settings import get_settings
+            mode = get_settings().active_mode
+            if mode == "aggressive":
+                # In aggressive mode, execute setups across all regimes
+                return True
+            elif mode == "moderate":
+                # In moderate mode, allow scalping across all regimes and day trading unless extreme volatility
+                if strategy_name == "scalping":
+                    return True
+                if strategy_name == "day_trading" and regime.volatility_label != "HIGH":
+                    return True
+        except Exception:
+            pass
         return strategy_name in regime.recommended_strategies

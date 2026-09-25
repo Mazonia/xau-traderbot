@@ -148,9 +148,8 @@ class EconomicEventsManager:
 
         # 2. Check recent HIGH impact news from database (within post_event_pause_minutes)
         try:
-            from database import crud
-            from database.models import NewsEvent
-            session = crud.get_session()
+            from database.models import NewsEvent, get_session
+            session = get_session()
             cutoff = now - timedelta(minutes=self.post_event_pause_minutes)
             recent_high = session.query(NewsEvent).filter(
                 NewsEvent.impact_level == "HIGH",

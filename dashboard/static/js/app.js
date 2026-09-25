@@ -426,6 +426,7 @@ function updateConnectionPill(connected) {
 async function refreshAll() {
     await Promise.allSettled([
         refreshAccount(),
+        refreshMode(),
         refreshPositions(),
         refreshTrades(),
         refreshStats(),
@@ -472,6 +473,37 @@ async function refreshAccount() {
     const statusSub = document.getElementById('floating-status');
     if (statusSub) {
         statusSub.textContent = `Closed: ${formatCurrency(realized, true)} | Float: ${formatCurrency(floating, true)}`;
+    }
+}
+
+// ── Trading Mode Profile Station ─────────────────────────────────────────
+async function refreshMode() {
+    const data = await fetchJSON('/api/mode');
+    if (!data) return;
+    const select = document.getElementById('mode-select');
+    if (select && data.active_mode) {
+        if (select.value !== data.active_mode) {
+            select.value = data.active_mode;
+        }
+    }
+}
+
+async function switchTradingMode(newMode) {
+    try {
+        const res = await fetch('/api/mode', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ mode: newMode })
+        });
+        const data = await res.json();
+        if (data && data.success) {
+            showToast(`Trading profile switched to ${newMode.toUpperCase()}`, 'success');
+            refreshAll();
+        } else {
+            showToast(`Failed to switch mode: ${data?.error || 'Unknown error'}`, 'error');
+        }
+    } catch (e) {
+        showToast(`Error switching mode: ${e.message}`, 'error');
     }
 }
 

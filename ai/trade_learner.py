@@ -281,7 +281,7 @@ class TradeLearner:
         direction: str,
         confluence_score: float,
         regime_val: str,
-        sentiment_score: float,
+        sentiment_score: float = 0.0,
     ) -> tuple[bool, str, float]:
         """
         Actively screen incoming signals against recent mistake memory.
@@ -301,15 +301,19 @@ class TradeLearner:
             )
 
         # 2. Match against active mistake memories
+        settings = get_settings()
+        base_min_confluence = float(settings.scalping_params.get("min_confluence_score", 50.0))
+        veto_threshold = base_min_confluence + 8.0
+
         for m in reversed(self.mistake_memory[-15:]):
             if m.get("strategy") == strat and m.get("direction") == direction and m.get("regime") == regime_val:
                 trap = m.get("trap_type", "similar mistake")
                 rule = m.get("rule", "Defensive rule in effect.")
                 # Require higher conviction to break past a known mistake
-                if confluence_score < 78.0:
+                if confluence_score < veto_threshold:
                     return (
                         False,
-                        f"🛡️ Mistake Guard Veto: Setup matches recent {trap} in {regime_val}. Rule: {rule}",
+                        f"🛡️ Mistake Guard Veto: Setup matches recent {trap} in {regime_val} (score {confluence_score:.1f} < required {veto_threshold:.1f}). Rule: {rule}",
                         8.0,
                     )
 

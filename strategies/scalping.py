@@ -68,8 +68,11 @@ class ScalpingStrategy(BaseStrategy):
         trend = "BULLISH" if current_price > ema_trend_val else "BEARISH"
 
         # Pullback detection: price near fast/slow EMA zone
-        pullback_zone = abs(current_price - ema_fast_val) / current_price * 100
-        is_in_pullback = pullback_zone < 0.15  # Within 0.15% of fast EMA
+        dist_fast = abs(current_price - ema_fast_val) / current_price * 100
+        dist_slow = abs(current_price - ema_slow_val) / current_price * 100
+        pullback_zone = min(dist_fast, dist_slow)
+        pullback_limit = float(get_settings().scalping_params.get("pullback_tolerance_pct", 0.25))
+        is_in_pullback = pullback_zone <= pullback_limit
 
         # EMA crossover
         ema_cross = ta.detect_ema_crossover(df, self.ema_fast, self.ema_slow)
@@ -185,16 +188,17 @@ class ScalpingStrategy(BaseStrategy):
             reasons.append(f"✅ Bearish candle: {bearish_patterns[0]['name']}")
 
         # ── Determine Direction ──────────────────────────────────────────
-        if bullish_score > bearish_score and bullish_score >= self.min_confluence_score:
+        min_tech = self.min_technical_score
+        if bullish_score > bearish_score and bullish_score >= min_tech:
             direction = SignalDirection.BUY
             score = bullish_score
-        elif bearish_score > bullish_score and bearish_score >= self.min_confluence_score:
+        elif bearish_score > bullish_score and bearish_score >= min_tech:
             direction = SignalDirection.SELL
             score = bearish_score
         else:
             score = max(bullish_score, bearish_score)
             reasons.append(
-                f"⏸ Score {score} below threshold {self.min_confluence_score}"
+                f"⏸ Technical score {score} below strategy setup threshold {min_tech}"
             )
 
         # Calculate SL/TP

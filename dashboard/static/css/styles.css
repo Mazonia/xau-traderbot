@@ -304,6 +304,32 @@ body.dark-theme {
 .pill-val.bullish { color: #34D399; }
 .pill-val.bearish { color: #F87171; }
 
+.mode-pill {
+    border-color: rgba(245, 158, 11, 0.35);
+    background: rgba(245, 158, 11, 0.08);
+}
+
+.mode-select-input {
+    background: transparent;
+    color: #F8FAFC;
+    border: none;
+    font-size: 11px;
+    font-weight: 700;
+    font-family: var(--font-mono);
+    cursor: pointer;
+    outline: none;
+    padding: 0 4px;
+}
+
+.mode-select-input:hover {
+    color: #F59E0B;
+}
+
+.mode-select-input option {
+    background: #0F172A;
+    color: #F8FAFC;
+}
+
 .action-btn {
     display: inline-flex;
     align-items: center;

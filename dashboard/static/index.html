@@ -55,6 +55,14 @@
             </div>
 
             <div class="nav-actions">
+                <div class="intelligence-pill mode-pill" id="nav-mode-pill" title="Active Trading Risk Profile">
+                    <span class="pill-label">PROFILE</span>
+                    <select id="mode-select" class="mode-select-input" onchange="switchTradingMode(this.value)">
+                        <option value="safe">🛡️ Safe</option>
+                        <option value="moderate" selected>⚖️ Moderate</option>
+                        <option value="aggressive">⚡ Aggressive</option>
+                    </select>
+                </div>
                 <div class="intelligence-pill" id="nav-regime-pill" title="Current Market Regime">
                     <span class="pill-label">REGIME</span>
                     <span class="pill-val" id="nav-regime-val">RANGING</span>

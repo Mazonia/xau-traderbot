@@ -201,15 +201,16 @@ class DayTradingStrategy(BaseStrategy):
             reasons.append(f"✅ {bearish_patterns[0]['name']}")
 
         # ── Determine Direction ──────────────────────────────────────────
-        if bullish_score > bearish_score and bullish_score >= self.min_confluence_score:
+        min_tech = self.min_technical_score
+        if bullish_score > bearish_score and bullish_score >= min_tech:
             direction = SignalDirection.BUY
             score = bullish_score
-        elif bearish_score > bullish_score and bearish_score >= self.min_confluence_score:
+        elif bearish_score > bullish_score and bearish_score >= min_tech:
             direction = SignalDirection.SELL
             score = bearish_score
         else:
             score = max(bullish_score, bearish_score)
-            reasons.append(f"⏸ Score {score} below threshold {self.min_confluence_score}")
+            reasons.append(f"⏸ Technical score {score} below strategy setup threshold {min_tech}")
 
         entry_price = analysis["current_price"]
         sl, tp = self.get_sl_tp(df, direction, entry_price)

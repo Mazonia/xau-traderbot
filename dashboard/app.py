@@ -283,6 +283,56 @@ async def get_sentiment_overview():
     })
 
 
+class ModeRequest(BaseModel):
+    mode: str
+
+
+@app.get("/api/mode")
+async def get_trading_mode():
+    """Get active trading profile mode and available options."""
+    settings = get_settings()
+    active = settings.active_mode
+    modes = settings.trading_modes
+    active_cfg = settings.active_mode_config
+    return JSONResponse({
+        "active_mode": active,
+        "config": active_cfg,
+        "available_modes": {
+            k: {
+                "name": v.get("name", k.title()),
+                "description": v.get("description", ""),
+                "risk_pct": v.get("max_risk_per_trade_pct", 2.5),
+                "scalp_conf": v.get("scalping_min_confluence", 50),
+                "day_conf": v.get("day_trading_min_confluence", 55),
+                "spread_max": v.get("max_spread_points", 70),
+            }
+            for k, v in modes.items()
+        }
+    })
+
+
+@app.post("/api/mode")
+async def set_trading_mode(req: ModeRequest):
+    """Switch active trading mode (safe, moderate, aggressive)."""
+    settings = get_settings()
+    target_mode = req.mode.lower().strip()
+    if target_mode not in settings.trading_modes:
+        return JSONResponse(
+            {"success": False, "error": f"Invalid mode. Choose from {list(settings.trading_modes.keys())}"},
+            status_code=400
+        )
+
+    success = settings.set_active_mode(target_mode)
+    if success:
+        logger.info(f"Dashboard switched trading mode to: {target_mode.upper()}")
+        return JSONResponse({
+            "success": True,
+            "active_mode": target_mode,
+            "config": settings.active_mode_config
+        })
+    return JSONResponse({"success": False, "error": "Failed to persist mode"}, status_code=500)
+
+
 @app.post("/api/close-position/{ticket}")
 async def close_position(ticket: int):
     """Close a specific open position and sync deals immediately."""
