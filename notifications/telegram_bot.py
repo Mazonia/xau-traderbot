@@ -167,7 +167,7 @@ class TelegramNotifier:
         curr_mode = self.settings.active_mode.upper()
         mode_icons = {"SAFE": "🛡️", "MODERATE": "⚖️", "AGGRESSIVE": "⚡"}
         icon = mode_icons.get(curr_mode, "🎛️")
-        mode_btn = InlineKeyboardButton(f"{icon} Mode: {curr_mode}", callback_data="cb_mode_menu")
+        mode_btn = InlineKeyboardButton(f"{icon} Profile Mode: {curr_mode} ⚙️", callback_data="cb_mode_menu")
 
         keyboard = [
             [
@@ -187,12 +187,15 @@ class TelegramNotifier:
                 InlineKeyboardButton("🏷️ Gold Price & Spread", callback_data="cb_price"),
             ],
             [
-                pause_btn,
                 mode_btn,
             ],
             [
-                InlineKeyboardButton("🔄 Refresh Menu", callback_data="cb_menu"),
+                pause_btn,
                 InlineKeyboardButton("🛑 EMERGENCY CLOSE ALL", callback_data="cb_confirm_closeall"),
+            ],
+            [
+                InlineKeyboardButton("🔄 Refresh Dashboard", callback_data="cb_menu"),
+                InlineKeyboardButton("📖 Help & Commands", callback_data="cb_help"),
             ],
         ]
         return InlineKeyboardMarkup(keyboard)
@@ -1076,9 +1079,10 @@ class TelegramNotifier:
         msg = (
             f"📖 <b>TELEGRAM BOT COMMAND CHEATSHEET</b>\n"
             f"{'━' * 28}\n\n"
-            f"<b>Navigation & Menus:</b>\n"
+            f"<b>Navigation & Profile Controls:</b>\n"
             f"• <code>/start</code> or <code>/menu</code> — Open interactive button dashboard\n"
-            f"• <code>/help</code> — Show this cheatsheet\n\n"
+            f"• <code>/mode</code> — Switch trading profile (Safe / Moderate / Aggressive)\n"
+            f"• <code>/help</code> — Show this command cheatsheet\n\n"
             f"<b>Market & Account Monitoring:</b>\n"
             f"• <code>/status</code> — Account balance, equity, and bot health\n"
             f"• <code>/positions</code> — List open trades with floating P&L\n"
@@ -1086,15 +1090,20 @@ class TelegramNotifier:
             f"• <code>/pnl</code> — Today's and 30-day performance\n"
             f"• <code>/news</code> — Macro news and Gemini sentiment\n"
             f"• <code>/regime</code> — Current market regime & active strategies\n"
+            f"• <code>/learning</code> — Self-learning performance & weight adaptations\n"
             f"• <code>/price</code> — Real-time Gold Bid, Ask, Spread\n\n"
-            f"<b>Remote Control & Emergency:</b>\n"
+            f"<b>Remote Control & Parameters:</b>\n"
             f"• <code>/pause</code> — Pause opening new trades\n"
             f"• <code>/resume</code> — Resume automated trading\n"
             f"• <code>/closeall</code> — Flatten all open positions immediately\n"
             f"• <code>/setlot 0.02</code> — Set default lot size\n"
             f"• <code>/setrisk 2.5</code> — Set max risk percent"
         )
-        await update.effective_message.reply_text(msg, parse_mode="HTML")
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🎛️ Switch Mode", callback_data="cb_mode_menu")],
+            [InlineKeyboardButton("🔙 Main Menu", callback_data="cb_menu")],
+        ])
+        await self._safe_edit_or_reply(update, text=msg, reply_markup=keyboard, parse_mode="HTML")
 
     async def _callback_router(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Route callback queries from inline buttons with gatekeeper authorization check."""
@@ -1152,6 +1161,8 @@ class TelegramNotifier:
                 await self._handle_confirm_closeall(update, context)
             elif data == "cb_do_closeall":
                 await self._handle_do_closeall(update, context)
+            elif data == "cb_help":
+                await self._handle_help(update, context)
             elif data.startswith("cb_close_"):
                 ticket = int(data.split("_")[-1])
                 await self._handle_close_single(update, ticket)
@@ -1213,6 +1224,33 @@ class TelegramNotifier:
 
             await self._app.initialize()
             await self._app.start()
+
+            # Register native Telegram Menu commands for quick auto-complete
+            try:
+                from telegram import BotCommand
+                cmds = [
+                    BotCommand("start", "Command Center & Main Menu"),
+                    BotCommand("mode", "Switch Trading Profile (Safe / Moderate / Aggressive)"),
+                    BotCommand("status", "Account Balance, Equity & Health"),
+                    BotCommand("positions", "Open Positions & Floating P&L"),
+                    BotCommand("pnl", "Daily & Monthly P&L Performance"),
+                    BotCommand("trades", "Recent Trade History"),
+                    BotCommand("news", "Macro News & Gemini Sentiment"),
+                    BotCommand("regime", "Market Regime & Active Strategies"),
+                    BotCommand("learning", "Autonomous Self-Learning Metrics"),
+                    BotCommand("price", "Live Gold Price & Spread"),
+                    BotCommand("pause", "Pause Automatic Order Execution"),
+                    BotCommand("resume", "Resume Automatic Order Execution"),
+                    BotCommand("setlot", "Set Default Lot Size (e.g. /setlot 0.02)"),
+                    BotCommand("setrisk", "Set Risk % Per Trade (e.g. /setrisk 2.0)"),
+                    BotCommand("closeall", "Emergency Close All Positions"),
+                    BotCommand("help", "Command Cheatsheet & Documentation"),
+                ]
+                await self._app.bot.set_my_commands(cmds)
+                logger.info("⚡ Registered native Telegram Menu commands via set_my_commands")
+            except Exception as e:
+                logger.warning(f"Could not register Telegram menu commands: {e}")
+
             await self._app.updater.start_polling(drop_pending_updates=True)
             self._is_polling = True
             logger.info("⚡ Telegram Interactive Bot polling started successfully")
@@ -1403,6 +1441,7 @@ class TelegramNotifier:
         # Register command handlers
         app.add_handler(CommandHandler(["start", "menu"], self._handle_start))
         app.add_handler(CommandHandler("status", self._handle_status))
+        app.add_handler(CommandHandler(["mode", "setmode"], self._handle_mode))
         app.add_handler(CommandHandler(["positions", "pos"], self._handle_positions))
         app.add_handler(CommandHandler("trades", self._handle_trades))
         app.add_handler(CommandHandler("pnl", self._handle_pnl))
@@ -1426,17 +1465,21 @@ class TelegramNotifier:
                 from telegram import BotCommand
                 cmds = [
                     BotCommand("start", "Command Center & Main Menu"),
+                    BotCommand("mode", "Switch Trading Profile (Safe / Moderate / Aggressive)"),
                     BotCommand("status", "Account Balance, Equity & Health"),
-                    BotCommand("positions", "Open Positions & Pending Orders"),
-                    BotCommand("learning", "Autonomous Self-Learning Metrics"),
+                    BotCommand("positions", "Open Positions & Floating P&L"),
+                    BotCommand("pnl", "Daily & Monthly P&L Performance"),
+                    BotCommand("trades", "Recent Trade History"),
                     BotCommand("news", "Macro News & Gemini Sentiment"),
                     BotCommand("regime", "Market Regime & Active Strategies"),
+                    BotCommand("learning", "Autonomous Self-Learning Metrics"),
                     BotCommand("price", "Live Gold Price & Spread"),
-                    BotCommand("trades", "Recent Trade History"),
-                    BotCommand("pnl", "Daily & Monthly P&L Stats"),
                     BotCommand("pause", "Pause Automatic Order Execution"),
                     BotCommand("resume", "Resume Automatic Order Execution"),
+                    BotCommand("setlot", "Set Default Lot Size (e.g. /setlot 0.02)"),
+                    BotCommand("setrisk", "Set Risk % Per Trade (e.g. /setrisk 2.0)"),
                     BotCommand("closeall", "Emergency Close All Positions"),
+                    BotCommand("help", "Command Cheatsheet & Documentation"),
                 ]
                 await application.bot.set_my_commands(cmds)
                 logger.info("⚡ Registered native Telegram Menu commands via set_my_commands")
