@@ -8,7 +8,7 @@ trade records, signals, news events, and performance data.
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-from sqlalchemy import desc, func
+from sqlalchemy import and_, desc, func, or_
 from loguru import logger
 
 from database.models import (
@@ -78,29 +78,39 @@ def close_trade(
     profit: float,
     swap: float = 0.0,
     commission: float = 0.0,
+    closed_at: Optional[datetime] = None,
 ) -> Optional[Trade]:
-    """Update a trade record when it's closed."""
+    """Update a trade record when it's closed, safely handling timezone offsets."""
     session = get_session()
     try:
         trade = session.query(Trade).filter_by(ticket=ticket, status="OPEN").first()
         if not trade:
+            # Check if it was already marked CLOSED
+            trade = session.query(Trade).filter_by(ticket=ticket).first()
+            if trade and trade.status == "CLOSED":
+                logger.debug(f"Trade #{ticket} is already marked CLOSED")
+                return trade
             logger.warning(f"No open trade found with ticket {ticket}")
             return None
 
         now = datetime.now(timezone.utc)
+        close_dt = closed_at or now
+
         trade.exit_price = exit_price
         trade.profit = profit
         trade.swap = swap
         trade.commission = commission
         trade.status = "CLOSED"
-        trade.closed_at = now
+        trade.closed_at = close_dt
 
         if trade.opened_at:
-            delta = now - trade.opened_at
-            trade.duration_minutes = int(delta.total_seconds() / 60)
+            op = trade.opened_at.replace(tzinfo=timezone.utc) if trade.opened_at.tzinfo is None else trade.opened_at
+            cl = close_dt.replace(tzinfo=timezone.utc) if close_dt.tzinfo is None else close_dt
+            delta = cl - op
+            trade.duration_minutes = max(0, int(delta.total_seconds() / 60))
 
         session.commit()
-        logger.debug(f"Trade closed: {trade}")
+        logger.info(f"Trade #{ticket} closed in DB | Profit: ${profit:+.2f}")
         return trade
     except Exception as e:
         session.rollback()
@@ -119,13 +129,15 @@ def get_open_trades() -> list[Trade]:
         session.close()
 
 
-def get_recent_trades(limit: int = 50) -> list[Trade]:
-    """Get recent trades ordered by opened_at descending."""
+def get_recent_trades(limit: int = 50, status: Optional[str] = None) -> list[Trade]:
+    """Get recent trades ordered by opened_at descending, optionally filtered by status."""
     session = get_session()
     try:
+        q = session.query(Trade)
+        if status:
+            q = q.filter(Trade.status == status)
         return (
-            session.query(Trade)
-            .order_by(desc(Trade.opened_at))
+            q.order_by(desc(Trade.opened_at))
             .limit(limit)
             .all()
         )
@@ -134,9 +146,11 @@ def get_recent_trades(limit: int = 50) -> list[Trade]:
 
 
 def get_daily_trades(date: datetime | None = None) -> list[Trade]:
-    """Get all trades for a specific date (defaults to today)."""
+    """Get all trades for a specific date (defaults to today UTC, matching either opened_at or closed_at)."""
     if date is None:
         date = datetime.now(timezone.utc)
+    elif date.tzinfo is None:
+        date = date.replace(tzinfo=timezone.utc)
 
     start_of_day = date.replace(hour=0, minute=0, second=0, microsecond=0)
     end_of_day = start_of_day + timedelta(days=1)
@@ -145,7 +159,12 @@ def get_daily_trades(date: datetime | None = None) -> list[Trade]:
     try:
         return (
             session.query(Trade)
-            .filter(Trade.opened_at >= start_of_day, Trade.opened_at < end_of_day)
+            .filter(
+                or_(
+                    and_(Trade.opened_at >= start_of_day, Trade.opened_at < end_of_day),
+                    and_(Trade.closed_at >= start_of_day, Trade.closed_at < end_of_day),
+                )
+            )
             .order_by(desc(Trade.opened_at))
             .all()
         )
@@ -154,9 +173,31 @@ def get_daily_trades(date: datetime | None = None) -> list[Trade]:
 
 
 def get_daily_pnl(date: datetime | None = None) -> float:
-    """Calculate total P&L for a specific day."""
-    trades = get_daily_trades(date)
-    return sum(t.profit for t in trades if t.profit is not None)
+    """Calculate total realized P&L for a specific day (defaults to today UTC based on closed_at)."""
+    if date is None:
+        date = datetime.now(timezone.utc)
+    elif date.tzinfo is None:
+        date = date.replace(tzinfo=timezone.utc)
+
+    start_of_day = date.replace(hour=0, minute=0, second=0, microsecond=0)
+    end_of_day = start_of_day + timedelta(days=1)
+
+    session = get_session()
+    try:
+        closed_trades = (
+            session.query(Trade)
+            .filter(
+                Trade.status == "CLOSED",
+                or_(
+                    and_(Trade.closed_at >= start_of_day, Trade.closed_at < end_of_day),
+                    and_(Trade.closed_at.is_(None), Trade.opened_at >= start_of_day, Trade.opened_at < end_of_day),
+                )
+            )
+            .all()
+        )
+        return round(sum(t.profit for t in closed_trades if t.profit is not None), 2)
+    finally:
+        session.close()
 
 
 def get_trade_stats(days: int = 30) -> dict:
@@ -254,9 +295,15 @@ def sync_mt5_deals(deals_list: list[dict]) -> int:
                 existing.status = "CLOSED"
                 if t.get("closed_at"):
                     existing.closed_at = t.get("closed_at")
+                if existing.opened_at and existing.closed_at:
+                    op = existing.opened_at.replace(tzinfo=timezone.utc) if existing.opened_at.tzinfo is None else existing.opened_at
+                    cl = existing.closed_at.replace(tzinfo=timezone.utc) if existing.closed_at.tzinfo is None else existing.closed_at
+                    delta = cl - op
+                    existing.duration_minutes = max(0, int(delta.total_seconds() / 60))
             else:
                 trade = Trade(
                     ticket=ticket,
+                    symbol=t.get("symbol", "XAUUSD"),
                     order_type=t.get("type", "BUY"),
                     strategy=t.get("strategy", "MT5_SYNC"),
                     volume=t.get("volume", 0.01),
@@ -270,6 +317,11 @@ def sync_mt5_deals(deals_list: list[dict]) -> int:
                     closed_at=t.get("closed_at"),
                     comment=t.get("comment", ""),
                 )
+                if trade.opened_at and trade.closed_at:
+                    op = trade.opened_at.replace(tzinfo=timezone.utc) if trade.opened_at.tzinfo is None else trade.opened_at
+                    cl = trade.closed_at.replace(tzinfo=timezone.utc) if trade.closed_at.tzinfo is None else trade.closed_at
+                    delta = cl - op
+                    trade.duration_minutes = max(0, int(delta.total_seconds() / 60))
                 session.add(trade)
             synced_count += 1
         session.commit()

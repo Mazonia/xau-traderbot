@@ -221,14 +221,30 @@ class TradeExecutor:
         success = self.mt5.close_position(ticket, comment=f"close_{reason}")
 
         if success:
+            deal_info = self.mt5.get_closed_deal_info(ticket)
+            if deal_info:
+                exit_price = deal_info["exit_price"]
+                profit = deal_info["profit"]
+                swap = deal_info["swap"]
+                commission = deal_info.get("commission", 0.0)
+                closed_at = deal_info.get("time")
+            else:
+                exit_price = position["price_current"]
+                profit = position["profit"]
+                swap = position["swap"]
+                commission = 0.0
+                closed_at = None
+
             crud.close_trade(
                 ticket=ticket,
-                exit_price=position["price_current"],
-                profit=position["profit"],
-                swap=position["swap"],
+                exit_price=exit_price,
+                profit=profit,
+                swap=swap,
+                commission=commission,
+                closed_at=closed_at,
             )
             logger.info(
-                f"Trade {ticket} closed | P&L: ${position['profit']:+.2f} | Reason: {reason}"
+                f"Trade {ticket} closed | P&L: ${profit:+.2f} | Reason: {reason}"
             )
             try:
                 from ai.trade_learner import trade_learner
@@ -236,7 +252,7 @@ class TradeExecutor:
                     "ticket": ticket,
                     "strategy": position.get("comment", "scalping").replace("close_", ""),
                     "direction": position.get("type", "BUY"),
-                    "profit": position["profit"],
+                    "profit": profit,
                     "regime": "RANGING",
                     "confluence_score": 75.0,
                     "sentiment_score": 0.0,
@@ -277,38 +293,44 @@ class TradeExecutor:
         for trade in db_open_trades:
             if trade.ticket not in mt5_tickets:
                 logger.info(f"Position {trade.ticket} closed externally — fetching deal history")
-                deal_info = self.mt5.get_closed_deal_info(trade.ticket)
-                if deal_info:
-                    exit_price = deal_info["exit_price"]
-                    profit = deal_info["profit"]
-                    swap = deal_info["swap"]
-                    commission = deal_info.get("commission", 0.0)
-                    reason = deal_info.get("comment", "SL/TP hit")
-                else:
-                    exit_price = trade.entry_price
-                    profit = 0.0
-                    swap = 0.0
-                    commission = 0.0
-                    reason = "Closed externally"
+                try:
+                    deal_info = self.mt5.get_closed_deal_info(trade.ticket)
+                    if deal_info:
+                        exit_price = deal_info["exit_price"]
+                        profit = deal_info["profit"]
+                        swap = deal_info["swap"]
+                        commission = deal_info.get("commission", 0.0)
+                        reason = deal_info.get("comment", "SL/TP hit")
+                        closed_at = deal_info.get("time")
+                    else:
+                        exit_price = trade.entry_price
+                        profit = 0.0
+                        swap = 0.0
+                        commission = 0.0
+                        reason = "Closed externally"
+                        closed_at = None
 
-                crud.close_trade(
-                    ticket=trade.ticket,
-                    exit_price=exit_price,
-                    profit=profit,
-                    swap=swap,
-                    commission=commission,
-                )
-                closed_events.append({
-                    "ticket": trade.ticket,
-                    "symbol": getattr(trade, "symbol", "XAUUSD"),
-                    "direction": trade.order_type,
-                    "entry_price": trade.entry_price,
-                    "exit_price": exit_price,
-                    "profit": profit,
-                    "swap": swap,
-                    "commission": commission,
-                    "reason": reason,
-                })
+                    crud.close_trade(
+                        ticket=trade.ticket,
+                        exit_price=exit_price,
+                        profit=profit,
+                        swap=swap,
+                        commission=commission,
+                        closed_at=closed_at,
+                    )
+                    closed_events.append({
+                        "ticket": trade.ticket,
+                        "symbol": getattr(trade, "symbol", "XAUUSD"),
+                        "direction": trade.order_type,
+                        "entry_price": trade.entry_price,
+                        "exit_price": exit_price,
+                        "profit": profit,
+                        "swap": swap,
+                        "commission": commission,
+                        "reason": reason,
+                    })
+                except Exception as e:
+                    logger.error(f"Failed to process externally closed position #{trade.ticket}: {e}")
 
         # Also sync any closed deals directly from MT5 broker history
         try:

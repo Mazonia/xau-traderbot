@@ -200,6 +200,22 @@ class TelegramNotifier:
         ]
         return InlineKeyboardMarkup(keyboard)
 
+    def _sync_mt5_deals_safe(self, days: int = 7):
+        """Safely sync recent broker history from MT5 into SQLite."""
+        try:
+            mt5_obj = None
+            if self.bot_instance and hasattr(self.bot_instance, "mt5"):
+                mt5_obj = self.bot_instance.mt5
+            else:
+                from core.mt5_connector import get_mt5_connector
+                mt5_obj = get_mt5_connector()
+            if mt5_obj and mt5_obj.is_connected():
+                deals = mt5_obj.get_historical_trades(days=days)
+                if deals:
+                    crud.sync_mt5_deals(deals)
+        except Exception as e:
+            logger.debug(f"Silent MT5 history sync check: {e}")
+
     # ── Command & Callback Handlers ──────────────────────────────────────
 
     async def _handle_start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -250,6 +266,8 @@ class TelegramNotifier:
         """Handle /status command or button."""
         if not self._is_authorized(update):
             return
+
+        self._sync_mt5_deals_safe(days=2)
 
         account = None
         if self.bot_instance and hasattr(self.bot_instance, "mt5"):
@@ -396,70 +414,109 @@ class TelegramNotifier:
         if not self._is_authorized(update):
             return
 
-        recent_trades = crud.get_recent_trades(limit=5)
-        stats = crud.get_trade_stats(days=7)
+        try:
+            # Auto-sync latest deals from MT5 broker history
+            self._sync_mt5_deals_safe(days=7)
 
-        if not recent_trades:
-            msg = (
-                f"📜 <b>TRADE HISTORY</b>\n"
-                f"{'━' * 25}\n\n"
-                f"<i>No completed trades recorded in the database yet.</i>"
-            )
-        else:
-            msg = (
-                f"📜 <b>RECENT TRADES (Last 7 Days)</b>\n"
-                f"{'━' * 28}\n"
-                f"Win Rate: <b>{stats.get('win_rate', 0.0):.1f}%</b> | Profit Factor: <b>{stats.get('profit_factor', 0.0):.2f}</b>\n\n"
-            )
-            for t in recent_trades:
-                p_emoji = "🟢" if t.profit >= 0 else "🔴"
-                msg += (
-                    f"{p_emoji} <b>#{t.ticket}</b> {t.order_type} {t.volume} lots\n"
-                    f"   Strategy: <i>{t.strategy}</i>\n"
-                    f"   In: ${t.entry_price:,.2f} → Out: ${t.exit_price:,.2f}\n"
-                    f"   Net P&L: <b>${t.profit:+,.2f}</b> ({t.status})\n\n"
+            # Prioritize completed closed trades for trade log, fallback to all recent trades
+            recent_trades = crud.get_recent_trades(limit=7, status="CLOSED")
+            if not recent_trades:
+                recent_trades = crud.get_recent_trades(limit=7)
+
+            stats = crud.get_trade_stats(days=7)
+
+            if not recent_trades:
+                msg = (
+                    f"📜 <b>TRADE HISTORY</b>\n"
+                    f"{'━' * 25}\n\n"
+                    f"<i>No completed trades recorded in the database yet.</i>"
                 )
+            else:
+                msg = (
+                    f"📜 <b>RECENT TRADES (Last 7 Days)</b>\n"
+                    f"{'━' * 28}\n"
+                    f"Win Rate: <b>{stats.get('win_rate', 0.0):.1f}%</b> | Profit Factor: <b>{stats.get('profit_factor', 0.0):.2f}</b>\n\n"
+                )
+                for t in recent_trades:
+                    profit_val = t.profit if t.profit is not None else 0.0
+                    p_emoji = "🟢" if profit_val > 0 else ("🔴" if profit_val < 0 else "⚪")
+                    entry_val = t.entry_price if t.entry_price is not None else 0.0
+                    exit_str = f"${t.exit_price:,.2f}" if t.exit_price is not None else ("OPEN" if t.status == "OPEN" else "N/A")
+                    profit_str = f"${profit_val:+,.2f}" if t.status == "CLOSED" else "Floating"
 
-        keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton("💰 View P&L Stats", callback_data="cb_pnl")],
-            [InlineKeyboardButton("🔙 Back to Main Menu", callback_data="cb_menu")],
-        ])
+                    msg += (
+                        f"{p_emoji} <b>#{t.ticket}</b> {t.order_type} {t.volume} lots\n"
+                        f"   Strategy: <i>{t.strategy}</i>\n"
+                        f"   In: ${entry_val:,.2f} → Out: {exit_str}\n"
+                        f"   Net P&L: <b>{profit_str}</b> ({t.status})\n\n"
+                    )
 
-        await self._safe_edit_or_reply(update, text=msg, reply_markup=keyboard, parse_mode="HTML")
+            keyboard = InlineKeyboardMarkup([
+                [InlineKeyboardButton("💰 View P&L Stats", callback_data="cb_pnl")],
+                [InlineKeyboardButton("🔄 Refresh Trades", callback_data="cb_trades")],
+                [InlineKeyboardButton("🔙 Back to Main Menu", callback_data="cb_menu")],
+            ])
+
+            await self._safe_edit_or_reply(update, text=msg, reply_markup=keyboard, parse_mode="HTML")
+        except Exception as e:
+            logger.error(f"Error handling /trades: {e}", exc_info=True)
+            await self._safe_edit_or_reply(
+                update,
+                text=f"⚠️ <b>Error retrieving trade history:</b>\n<code>{e}</code>",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("🔙 Back to Main Menu", callback_data="cb_menu")]
+                ]),
+                parse_mode="HTML"
+            )
 
     async def _handle_pnl(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /pnl command or button."""
         if not self._is_authorized(update):
             return
 
-        daily_pnl = crud.get_daily_pnl()
-        stats_7d = crud.get_trade_stats(days=7)
-        stats_30d = crud.get_trade_stats(days=30)
+        try:
+            # Auto-sync latest deals from MT5 broker history
+            self._sync_mt5_deals_safe(days=7)
 
-        daily_emoji = "🟢" if daily_pnl >= 0 else "🔴"
+            daily_pnl = crud.get_daily_pnl()
+            stats_7d = crud.get_trade_stats(days=7)
+            stats_30d = crud.get_trade_stats(days=30)
 
-        msg = (
-            f"💰 <b>P&L & PERFORMANCE OVERVIEW</b>\n"
-            f"{'━' * 28}\n\n"
-            f"{daily_emoji} <b>Today's P&L:</b> <code>${daily_pnl:+,.2f}</code>\n\n"
-            f"📅 <b>7-Day Performance:</b>\n"
-            f"   • Total Trades: {stats_7d.get('total_trades', 0)}\n"
-            f"   • Win Rate: <b>{stats_7d.get('win_rate', 0.0):.1f}%</b>\n"
-            f"   • Net Profit: <code>${stats_7d.get('total_profit', 0.0):+,.2f}</code>\n"
-            f"   • Profit Factor: {stats_7d.get('profit_factor', 0.0):.2f}\n\n"
-            f"📆 <b>30-Day Performance:</b>\n"
-            f"   • Total Trades: {stats_30d.get('total_trades', 0)}\n"
-            f"   • Win Rate: <b>{stats_30d.get('win_rate', 0.0):.1f}%</b>\n"
-            f"   • Net Profit: <code>${stats_30d.get('total_profit', 0.0):+,.2f}</code>\n"
-            f"   • Profit Factor: {stats_30d.get('profit_factor', 0.0):.2f}"
-        )
+            daily_emoji = "🟢" if daily_pnl >= 0 else "🔴"
 
-        keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton("📜 View Trade History", callback_data="cb_trades")],
-            [InlineKeyboardButton("🔙 Back to Main Menu", callback_data="cb_menu")],
-        ])
+            msg = (
+                f"💰 <b>P&L & PERFORMANCE OVERVIEW</b>\n"
+                f"{'━' * 28}\n\n"
+                f"{daily_emoji} <b>Today's Realized P&L:</b> <code>${daily_pnl:+,.2f}</code>\n\n"
+                f"📅 <b>7-Day Performance:</b>\n"
+                f"   • Total Trades: {stats_7d.get('total_trades', 0)}\n"
+                f"   • Win Rate: <b>{stats_7d.get('win_rate', 0.0):.1f}%</b>\n"
+                f"   • Net Profit: <code>${stats_7d.get('total_profit', 0.0):+,.2f}</code>\n"
+                f"   • Profit Factor: {stats_7d.get('profit_factor', 0.0):.2f}\n\n"
+                f"📆 <b>30-Day Performance:</b>\n"
+                f"   • Total Trades: {stats_30d.get('total_trades', 0)}\n"
+                f"   • Win Rate: <b>{stats_30d.get('win_rate', 0.0):.1f}%</b>\n"
+                f"   • Net Profit: <code>${stats_30d.get('total_profit', 0.0):+,.2f}</code>\n"
+                f"   • Profit Factor: {stats_30d.get('profit_factor', 0.0):.2f}"
+            )
 
-        await self._safe_edit_or_reply(update, text=msg, reply_markup=keyboard, parse_mode="HTML")
+            keyboard = InlineKeyboardMarkup([
+                [InlineKeyboardButton("📜 View Trade History", callback_data="cb_trades")],
+                [InlineKeyboardButton("🔄 Refresh P&L", callback_data="cb_pnl")],
+                [InlineKeyboardButton("🔙 Back to Main Menu", callback_data="cb_menu")],
+            ])
+
+            await self._safe_edit_or_reply(update, text=msg, reply_markup=keyboard, parse_mode="HTML")
+        except Exception as e:
+            logger.error(f"Error handling /pnl: {e}", exc_info=True)
+            await self._safe_edit_or_reply(
+                update,
+                text=f"⚠️ <b>Error retrieving P&L stats:</b>\n<code>{e}</code>",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("🔙 Back to Main Menu", callback_data="cb_menu")]
+                ]),
+                parse_mode="HTML"
+            )
 
     async def _handle_news(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /news command or button."""
@@ -1337,11 +1394,16 @@ class TelegramNotifier:
             d = ticket
             ticket = d.get("ticket", 0)
             direction = d.get("direction", "")
-            profit = d.get("profit", 0.0)
-            entry = d.get("entry_price", d.get("entry", 0.0))
-            exit_price = d.get("exit_price", d.get("close_price", 0.0))
-            duration_min = d.get("duration_minutes", d.get("duration_min", 0))
+            profit = d.get("profit") if d.get("profit") is not None else 0.0
+            entry = d.get("entry_price") or d.get("entry") or 0.0
+            exit_price = d.get("exit_price") or d.get("close_price") or 0.0
+            duration_min = d.get("duration_minutes") or d.get("duration_min") or 0
             reason = d.get("reason", "TP/SL")
+        else:
+            profit = profit if profit is not None else 0.0
+            entry = entry or 0.0
+            exit_price = exit_price or 0.0
+            duration_min = duration_min or 0
 
         emoji = "✅" if profit > 0 else "❌"
         profit_color = "🟢" if profit > 0 else "🔴"

@@ -87,7 +87,10 @@ class SentimentAggregator:
 
         for item in self._recent_sentiments:
             # Time decay: exponential decay based on hours since publication
-            hours_old = (now - item["published_at"]).total_seconds() / 3600
+            pub_at = item["published_at"]
+            if pub_at and pub_at.tzinfo is None:
+                pub_at = pub_at.replace(tzinfo=timezone.utc)
+            hours_old = (now - pub_at).total_seconds() / 3600 if pub_at else 0.0
             decay = math.exp(-hours_old / self.decay_hours)
 
             # Combined weight = impact_weight * time_decay
