@@ -167,9 +167,11 @@ class TradingBot:
         # Send startup notification via Telegram
         mode = "DEMO" if self.settings.demo_mode else "LIVE"
         balance_str = f"${account['balance']:,.2f}" if account else "N/A"
+        active_profile = self.settings.active_mode.capitalize()
+        profile_emoji = {"Safe": "🟢", "Moderate": "🟡", "Aggressive": "🔴"}.get(active_profile, "⚪")
         await self.telegram.send_bot_status(
             "RUNNING",
-            f"Mode: {mode}\nBalance: {balance_str}\nSymbol: XAUUSD"
+            f"Mode: {mode}\nBalance: {balance_str}\nSymbol: XAUUSD\nTrading Profile: {profile_emoji} {active_profile}"
         )
 
         # Start interactive 2-way Telegram polling in background
