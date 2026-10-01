@@ -73,7 +73,7 @@ class GeminiSettings(BaseSettings):
     """Google Gemini AI settings."""
 
     api_key: str = Field(default="", alias="GEMINI_API_KEY")
-    model: str = Field(default="gemini-2.5-flash", alias="GEMINI_MODEL")
+    model: str = Field(default="gemini-1.5-flash", alias="GEMINI_MODEL")
     max_tokens: int = 2048
     temperature: float = 0.3  # Low temp for factual analysis
 
