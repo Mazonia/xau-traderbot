@@ -307,4 +307,23 @@ def get_settings() -> Settings:
     global _settings
     if _settings is None:
         _settings = Settings()
+        _validate_security(_settings)
     return _settings
+
+
+def _validate_security(settings: Settings):
+    """Emit warnings for insecure default credentials (non-breaking)."""
+    import warnings
+
+    if settings.dashboard.secret_key == "change-me-in-production":
+        warnings.warn(
+            "⚠️ SECURITY: Dashboard secret_key is still the default. "
+            "Set DASHBOARD_SECRET_KEY in your .env for production use.",
+            stacklevel=2,
+        )
+    if settings.dashboard.password in ("", "admin123", "password"):
+        warnings.warn(
+            "⚠️ SECURITY: Dashboard password is weak/default. "
+            "Set a strong DASHBOARD_PASSWORD in your .env.",
+            stacklevel=2,
+        )

@@ -525,7 +525,6 @@ class MT5Connector:
         return result_dict
 
     @synchronized
-    @synchronized
     def send_pending_order(
         self,
         order_type: str,
@@ -621,6 +620,7 @@ class MT5Connector:
         logger.error(f"Failed to cancel order #{order_ticket}: {result.comment if result else mt5.last_error()}")
         return False
 
+    @synchronized
     def modify_position(
         self,
         ticket: int,
@@ -748,7 +748,7 @@ class MT5Connector:
             return None
         try:
             from datetime import timedelta
-            now = datetime.now() + timedelta(days=2)
+            now = datetime.now(timezone.utc) + timedelta(days=2)
             from_date = now - timedelta(days=30)
             deals = mt5.history_deals_get(from_date, now, position=ticket)
             if deals and len(deals) > 0:
@@ -779,7 +779,7 @@ class MT5Connector:
             return []
         try:
             from datetime import timedelta
-            now = datetime.now() + timedelta(days=2)
+            now = datetime.now(timezone.utc) + timedelta(days=2)
             from_date = now - timedelta(days=days)
             deals = mt5.history_deals_get(from_date, now)
             if not deals:

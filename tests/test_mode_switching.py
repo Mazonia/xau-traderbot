@@ -204,6 +204,8 @@ def test_trade_learner_mistake_guard_adaptation():
 
     try:
         learner = TradeLearner()
+        # Reset multipliers so the test doesn't depend on accumulated DB state
+        learner.strategy_multipliers = {"scalping": 1.0, "day_trading": 1.0, "swing_trading": 1.0}
         # Add a mock mistake memory
         learner.mistake_memory.append({
             "strategy": "scalping",

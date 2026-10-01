@@ -1,6 +1,6 @@
 symbol: XAUUSD
 symbol_suffix: ''
-active_mode: safe
+active_mode: moderate
 trading_modes:
   safe:
     name: Safe / Conservative
@@ -201,6 +201,22 @@ news:
   - recession
   - employment
   - GDP
+  - BRICS
+  - de-dollarization
+  - dedollarization
+  - central bank gold
+  - sovereign debt
+  - sanctions
+  - stagflation
+  - yield curve
+  - debt ceiling
+  - quantitative tightening
+  - rate pause
+  - AI bubble
+  - crypto
+  - bitcoin
+  - safe haven demand
+  - PPI
 confluence:
   technical_weight: 40
   ai_prediction_weight: 25

@@ -112,19 +112,19 @@ class SentimentAggregator:
         data_points = len(self._recent_sentiments)
         confidence = min(data_points / 10, 1.0)  # Max confidence with 10+ articles
 
-        # Direction
+        # Also check from database
+        db_sentiment = crud.get_recent_sentiment(hours=self.decay_hours)
+        if db_sentiment != 0.0:
+            # Blend with DB sentiment
+            avg_score = avg_score * 0.7 + db_sentiment * 0.3
+
+        # Direction (determined after DB blend for consistency)
         if avg_score > 0.15:
             direction = "BULLISH"
         elif avg_score < -0.15:
             direction = "BEARISH"
         else:
             direction = "NEUTRAL"
-
-        # Also check from database
-        db_sentiment = crud.get_recent_sentiment(hours=self.decay_hours)
-        if db_sentiment != 0.0:
-            # Blend with DB sentiment
-            avg_score = avg_score * 0.7 + db_sentiment * 0.3
 
         return {
             "direction": direction,

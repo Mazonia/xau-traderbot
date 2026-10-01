@@ -42,6 +42,14 @@ class EconomicEventsManager:
         "ism",
         "powell",
         "rate decision",
+        # 2025-2026 additions
+        "pce",              # Fed's preferred inflation gauge
+        "jolts",            # Job openings — Fed watches closely
+        "adp",              # ADP employment change
+        "ecb",              # ECB decisions increasingly correlated with Gold
+        "tariff",           # Trade policy shocks
+        "debt ceiling",     # US debt ceiling showdowns
+        "treasury auction", # Bond market liquidity events
     ]
 
     def __init__(self):

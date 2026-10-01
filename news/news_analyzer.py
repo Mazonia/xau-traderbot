@@ -88,7 +88,12 @@ class NewsAnalyzer:
             "gold advance", "gold gain", "weak dollar", "dollar slide", "dollar fall", "dollar drop", "dollar sink",
             "dollar weak", "dollar soft", "war", "conflict", "geopolitical", "crisis", "tension", "escalat", "strike", "attack",
             "recession", "slowdown", "debt", "deficit", "bank failure", "tariff", "trade war",
-            "stimulus", "liquidity", "central bank", "reserve"
+            "stimulus", "liquidity", "central bank", "reserve",
+            # 2025-2026 bullish Gold catalysts
+            "brics", "de-dollarization", "dedollarization", "central bank gold", "gold buying",
+            "sovereign debt", "debt crisis", "sanctions", "stagflation", "yield curve inversion",
+            "debt ceiling", "quantitative easing", "safe haven demand", "rate pause",
+            "currency debasement", "fiscal deficit", "banking crisis",
         ]
         
         # Bearish factors for Gold (Rate hikes, hawkish, strong dollar, peace, high yields)
@@ -97,7 +102,10 @@ class NewsAnalyzer:
             "disinflation", "strong dollar", "dollar surge", "dollar rally", "dollar jump", "dollar gain", "dollar strong",
             "gold drop", "gold fall", "gold tumble", "gold slide", "gold retreat", "gold sink",
             "ceasefire", "peace", "de-escalat", "diplomacy", "strong job", "nfp beat", "robust job",
-            "yield surge", "yields rise", "yields jump"
+            "yield surge", "yields rise", "yields jump",
+            # 2025-2026 bearish Gold catalysts
+            "quantitative tightening", "rate increase", "ai bubble burst", "risk on rally",
+            "dollar dominance", "crypto surge", "bitcoin rally",
         ]
         
         bull_matches = [kw for kw in bullish_keywords if kw in t]
