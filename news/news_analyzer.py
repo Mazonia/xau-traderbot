@@ -255,83 +255,92 @@ Important context:
 - Gold falls on: rate hike expectations, strong USD, risk-on sentiment, low inflation
 """
 
-        try:
-            import asyncio
+        import asyncio
 
-            def _call_gemini_sync():
-                return client.models.generate_content(
-                    model=self.settings.gemini.model,
-                    contents=prompt,
-                    config={
-                        "temperature": self.settings.gemini.temperature,
-                        "max_output_tokens": self.settings.gemini.max_tokens,
-                    },
-                )
+        # Candidate model failover list to handle 503 capacity spikes automatically
+        candidate_models = [self.settings.gemini.model, "gemini-3.5-flash-lite", "gemini-3.5-flash"]
+        # Remove duplicates while preserving order
+        candidate_models = list(dict.fromkeys(candidate_models))
 
-            # Non-blocking async execution with 12s timeout
+        last_error = None
+
+        for model_name in candidate_models:
             try:
+                def _call_gemini_sync(m_name=model_name):
+                    return client.models.generate_content(
+                        model=m_name,
+                        contents=prompt,
+                        config={
+                            "temperature": self.settings.gemini.temperature,
+                            "max_output_tokens": self.settings.gemini.max_tokens,
+                        },
+                    )
+
                 response = await asyncio.wait_for(
                     asyncio.to_thread(_call_gemini_sync),
                     timeout=12.0
                 )
                 text = response.text.strip()
-            except asyncio.TimeoutError:
-                raise TimeoutError("Gemini API call timed out after 12s")
 
-            # Robust JSON extraction from potential markdown or introductory text
-            import re
-            json_match = re.search(r'\{[\s\S]*\}', text)
-            if json_match:
-                result = json.loads(json_match.group(0))
-            else:
-                result = json.loads(text)
+                # Robust JSON extraction from potential markdown or introductory text
+                import re
+                json_match = re.search(r'\{[\s\S]*\}', text)
+                if json_match:
+                    result = json.loads(json_match.group(0))
+                else:
+                    result = json.loads(text)
 
-            # Strict validation and boundary clamping for AI-derived fields
-            try:
-                score = float(result.get("score", 0.0))
-            except (ValueError, TypeError):
-                score = 0.0
-            score = max(-1.0, min(1.0, score))
+                # Strict validation and boundary clamping for AI-derived fields
+                try:
+                    score = float(result.get("score", 0.0))
+                except (ValueError, TypeError):
+                    score = 0.0
+                score = max(-1.0, min(1.0, score))
 
-            sentiment = str(result.get("sentiment", "NEUTRAL")).strip().upper()
-            if sentiment not in ("BULLISH", "BEARISH", "NEUTRAL"):
-                sentiment = "NEUTRAL"
+                sentiment = str(result.get("sentiment", "NEUTRAL")).strip().upper()
+                if sentiment not in ("BULLISH", "BEARISH", "NEUTRAL"):
+                    sentiment = "NEUTRAL"
 
-            impact = str(result.get("impact_level", "LOW")).strip().upper()
-            if impact not in ("HIGH", "MEDIUM", "LOW"):
-                impact = "LOW"
+                impact = str(result.get("impact_level", "LOW")).strip().upper()
+                if impact not in ("HIGH", "MEDIUM", "LOW"):
+                    impact = "LOW"
 
-            direction = str(result.get("expected_direction", "FLAT")).strip().upper()
-            if direction not in ("UP", "DOWN", "FLAT"):
-                direction = "FLAT"
+                direction = str(result.get("expected_direction", "FLAT")).strip().upper()
+                if direction not in ("UP", "DOWN", "FLAT"):
+                    direction = "FLAT"
 
-            result["score"] = score
-            result["sentiment"] = sentiment
-            result["impact_level"] = impact
-            result["expected_direction"] = direction
+                result["score"] = score
+                result["sentiment"] = sentiment
+                result["impact_level"] = impact
+                result["expected_direction"] = direction
 
-            logger.info(
-                f"Gemini analysis: {sentiment} "
-                f"(score={score:.2f}, impact={impact})"
-            )
-            return result
+                logger.info(
+                    f"Gemini analysis ({model_name}): {sentiment} "
+                    f"(score={score:.2f}, impact={impact})"
+                )
+                return result
 
-        except json.JSONDecodeError as e:
-            logger.warning(f"Gemini returned invalid JSON, using lexicon fallback: {e}")
-            return self._fallback_lexicon_analysis(headline, summary, reason="Parse Fallback")
-        except Exception as e:
-            err_msg = str(e)
-            if self.settings.gemini.api_key:
-                err_msg = err_msg.replace(self.settings.gemini.api_key, "***GEMINI_KEY***")
+            except Exception as e:
+                last_error = e
+                err_str = str(e)
+                if "503" in err_str or "UNAVAILABLE" in err_str or "404" in err_str:
+                    logger.debug(f"Gemini model {model_name} unavailable ({err_str[:60]}), trying next candidate...")
+                    continue
+                else:
+                    break
 
-            if "429" in err_msg or "RESOURCE_EXHAUSTED" in err_msg or "quota" in err_msg.lower():
-                import time
-                self._gemini_cooldown_until = time.time() + 60.0
-                logger.info("Gemini API rate limit reached — temporarily switching to financial lexicon analyzer (60s cooldown)")
-            else:
-                logger.warning(f"Gemini analysis fallback (temporary issue: {err_msg[:90]}...)")
+        err_msg = str(last_error) if last_error else "Unknown error"
+        if self.settings.gemini.api_key:
+            err_msg = err_msg.replace(self.settings.gemini.api_key, "***GEMINI_KEY***")
 
-            return self._fallback_lexicon_analysis(headline, summary, reason="Lexicon Fallback")
+        if "429" in err_msg or "RESOURCE_EXHAUSTED" in err_msg or "quota" in err_msg.lower():
+            import time
+            self._gemini_cooldown_until = time.time() + 60.0
+            logger.info("Gemini API rate limit reached — temporarily switching to financial lexicon analyzer (60s cooldown)")
+        else:
+            logger.warning(f"Gemini analysis fallback (temporary issue: {err_msg[:90]}...)")
+
+        return self._fallback_lexicon_analysis(headline, summary, reason="Lexicon Fallback")
 
     async def analyze_article(self, article: dict) -> dict:
         """
