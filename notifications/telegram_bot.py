@@ -27,6 +27,7 @@ Features:
 """
 
 import asyncio
+import html
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 from loguru import logger
@@ -101,6 +102,13 @@ class TelegramNotifier:
         """Link the parent TradingBot instance for live data and control."""
         self.bot_instance = bot_instance
 
+    def _get_mt5(self):
+        """Unified resolver for MT5 connector instance."""
+        if self.bot_instance and hasattr(self.bot_instance, "mt5"):
+            return self.bot_instance.mt5
+        from core.mt5_connector import get_mt5_connector
+        return get_mt5_connector()
+
     def _is_authorized(self, update: Update) -> bool:
         """
         Verify message sender matches the authorized Telegram chat or user ID whitelist.
@@ -122,9 +130,8 @@ class TelegramNotifier:
         )
         return False
 
-
     async def _safe_edit_or_reply(self, update: Update, text: str, reply_markup: Any = None, parse_mode: str = "HTML"):
-        """Safely edit the current callback message, handling 'Message is not modified' gracefully."""
+        """Safely edit the current callback message, handling 'Message is not modified' gracefully and falling back to plain text if HTML parsing fails."""
         if update.callback_query:
             try:
                 await update.callback_query.edit_message_text(
@@ -141,6 +148,18 @@ class TelegramNotifier:
                     except Exception:
                         pass
                     return
+                # If HTML parsing failed on edit, try plain text
+                if "parse entities" in err_str.lower() and parse_mode:
+                    try:
+                        import re
+                        plain = re.sub(r"<[^>]+>", "", text)
+                        await update.callback_query.edit_message_text(
+                            text=plain,
+                            reply_markup=reply_markup,
+                        )
+                        return
+                    except Exception:
+                        pass
                 logger.debug(f"Could not edit message, falling back to reply: {e}")
 
         if update.effective_message:
@@ -151,6 +170,18 @@ class TelegramNotifier:
                     parse_mode=parse_mode,
                 )
             except Exception as e:
+                # If HTML parsing failed on reply, retry stripped plain text
+                if "parse entities" in str(e).lower() and parse_mode:
+                    try:
+                        import re
+                        plain = re.sub(r"<[^>]+>", "", text)
+                        await update.effective_message.reply_text(
+                            text=plain,
+                            reply_markup=reply_markup,
+                        )
+                        return
+                    except Exception:
+                        pass
                 logger.error(f"Failed to send reply message: {e}")
 
     # ── Interactive Keyboards ─────────────────────────────────────────────
@@ -187,6 +218,10 @@ class TelegramNotifier:
                 InlineKeyboardButton("🏷️ Gold Price & Spread", callback_data="cb_price"),
             ],
             [
+                InlineKeyboardButton("🎯 Live Signal & Confluence", callback_data="cb_signal"),
+                InlineKeyboardButton("⚙️ Risk & Lot Settings", callback_data="cb_risk_menu"),
+            ],
+            [
                 mode_btn,
             ],
             [
@@ -203,12 +238,7 @@ class TelegramNotifier:
     def _sync_mt5_deals_safe(self, days: int = 7):
         """Safely sync recent broker history from MT5 into SQLite."""
         try:
-            mt5_obj = None
-            if self.bot_instance and hasattr(self.bot_instance, "mt5"):
-                mt5_obj = self.bot_instance.mt5
-            else:
-                from core.mt5_connector import get_mt5_connector
-                mt5_obj = get_mt5_connector()
+            mt5_obj = self._get_mt5()
             if mt5_obj and mt5_obj.is_connected():
                 deals = mt5_obj.get_historical_trades(days=days)
                 if deals:
@@ -270,11 +300,7 @@ class TelegramNotifier:
         self._sync_mt5_deals_safe(days=2)
 
         account = None
-        if self.bot_instance and hasattr(self.bot_instance, "mt5"):
-            mt5_obj = self.bot_instance.mt5
-        else:
-            from core.mt5_connector import MT5Connector
-            mt5_obj = MT5Connector()
+        mt5_obj = self._get_mt5()
 
         is_conn = mt5_obj.is_connected() if callable(getattr(mt5_obj, "is_connected", None)) else getattr(mt5_obj, "is_connected", False)
         if not is_conn and hasattr(mt5_obj, "connect"):
@@ -315,8 +341,14 @@ class TelegramNotifier:
         )
 
         keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton("📈 View Open Positions", callback_data="cb_positions")],
-            [InlineKeyboardButton("🔙 Back to Main Menu", callback_data="cb_menu")],
+            [
+                InlineKeyboardButton("📈 View Open Positions", callback_data="cb_positions"),
+                InlineKeyboardButton("🎯 Live Signal", callback_data="cb_signal"),
+            ],
+            [
+                InlineKeyboardButton("🔄 Refresh Status", callback_data="cb_status"),
+                InlineKeyboardButton("🔙 Back to Main Menu", callback_data="cb_menu"),
+            ],
         ])
 
         await self._safe_edit_or_reply(update, text=msg, reply_markup=keyboard, parse_mode="HTML")
@@ -329,11 +361,7 @@ class TelegramNotifier:
         positions = []
         pending = []
         is_conn = False
-        if self.bot_instance and hasattr(self.bot_instance, "mt5"):
-            mt5_obj = self.bot_instance.mt5
-        else:
-            from core.mt5_connector import MT5Connector
-            mt5_obj = MT5Connector()
+        mt5_obj = self._get_mt5()
 
         is_conn = mt5_obj.is_connected() if callable(getattr(mt5_obj, "is_connected", None)) else getattr(mt5_obj, "is_connected", False)
         if not is_conn and hasattr(mt5_obj, "connect"):
@@ -402,7 +430,10 @@ class TelegramNotifier:
                     ])
 
         keyboard_rows.append([
+            InlineKeyboardButton("🎯 Live Signal", callback_data="cb_signal"),
             InlineKeyboardButton("🔄 Refresh Positions", callback_data="cb_positions"),
+        ])
+        keyboard_rows.append([
             InlineKeyboardButton("🔙 Main Menu", callback_data="cb_menu"),
         ])
 
@@ -526,11 +557,12 @@ class TelegramNotifier:
         sentiment_score = crud.get_recent_sentiment(hours=24)
         sent_emoji = "📈 BULLISH" if sentiment_score > 0.1 else ("📉 BEARISH" if sentiment_score < -0.1 else "➡️ NEUTRAL")
 
+        ai_model_name = getattr(self.settings.gemini, "model", "Gemini AI")
         msg = (
             f"📰 <b>MARKET NEWS & AI SENTIMENT</b>\n"
             f"{'━' * 28}\n\n"
             f"<b>Composite 24H Sentiment:</b> {sent_emoji} (<code>{sentiment_score:+.2f}</code>)\n"
-            f"<b>AI Engine:</b> Gemini 3.6 Flash + Bullion Sentiment\n\n"
+            f"<b>AI Engine:</b> <code>{ai_model_name}</code> + Bullion Sentiment\n\n"
         )
 
         # Pull top distinct news events from DB
@@ -553,12 +585,14 @@ class TelegramNotifier:
                 msg += "<b>Latest Macro Analysis:</b>\n"
                 for ev in unique_events:
                     impact_emoji = "🔴" if ev.impact_level == "HIGH" else ("🟡" if ev.impact_level == "MEDIUM" else "🟢")
+                    headline_clean = html.escape(ev.headline[:75])
+                    source_clean = html.escape(ev.source or "Market")
                     msg += (
-                        f"{impact_emoji} <b>{ev.headline[:75]}...</b>\n"
-                        f"   Sentiment: <b>{ev.sentiment}</b> (<code>{ev.sentiment_score:+.2f}</code>) | Source: <i>{ev.source}</i>\n"
+                        f"{impact_emoji} <b>{headline_clean}...</b>\n"
+                        f"   Sentiment: <b>{ev.sentiment}</b> (<code>{ev.sentiment_score:+.2f}</code>) | Source: <i>{source_clean}</i>\n"
                     )
                     if ev.gemini_analysis:
-                        clean_note = ev.gemini_analysis[:110].replace("<", "&lt;").replace(">", "&gt;")
+                        clean_note = html.escape(ev.gemini_analysis[:110])
                         msg += f"   <i>AI Note:</i> {clean_note}...\n\n"
                     else:
                         msg += "\n"
@@ -751,38 +785,201 @@ class TelegramNotifier:
         await self._safe_edit_or_reply(update, text=msg, reply_markup=keyboard, parse_mode="HTML")
 
     async def _handle_price(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Handle /price command or button."""
+        """Handle /price command or button with live quotes, daily range, and spread analysis."""
         if not self._is_authorized(update):
             return
 
+        mt5_obj = self._get_mt5()
+        is_conn = mt5_obj.is_connected() if callable(getattr(mt5_obj, "is_connected", None)) else getattr(mt5_obj, "is_connected", False)
+        if not is_conn and hasattr(mt5_obj, "connect"):
+            is_conn = mt5_obj.connect(max_retries=1, retry_delay=0.1)
+
         tick = None
-        if self.bot_instance and hasattr(self.bot_instance, "mt5"):
-            mt5_obj = self.bot_instance.mt5
-            is_conn = mt5_obj.is_connected() if callable(getattr(mt5_obj, "is_connected", None)) else getattr(mt5_obj, "is_connected", False)
-            if is_conn:
-                tick = mt5_obj.get_current_tick(self.settings.symbol, auto_reconnect=False)
+        df_d1 = None
+        if is_conn:
+            tick = mt5_obj.get_current_tick(self.settings.symbol, auto_reconnect=False)
+            try:
+                df_d1 = mt5_obj.get_rates(timeframe="D1", count=2, auto_reconnect=False)
+            except Exception:
+                pass
 
         if tick:
             bid = tick.get("bid", 0.0)
             ask = tick.get("ask", 0.0)
-            spread = tick.get("spread", 0.0)
+            spread_pts = tick.get("spread", 0.0)
+            spread_cash = (ask - bid) if (ask and bid) else 0.0
+
+            # Compute daily high/low if available
+            range_info = ""
+            if df_d1 is not None and not df_d1.empty:
+                today_bar = df_d1.iloc[-1]
+                high = float(today_bar.get("high", 0.0))
+                low = float(today_bar.get("low", 0.0))
+                open_p = float(today_bar.get("open", 0.0))
+                day_range = high - low
+                chg = bid - open_p if open_p > 0 else 0.0
+                chg_pct = (chg / open_p * 100) if open_p > 0 else 0.0
+                chg_emoji = "🟢" if chg >= 0 else "🔴"
+                range_info = (
+                    f"<b>24H High:</b> <code>${high:,.2f}</code>\n"
+                    f"<b>24H Low:</b> <code>${low:,.2f}</code>\n"
+                    f"<b>Daily Range:</b> <code>${day_range:.2f}</code> ({day_range * 100:.0f} pts)\n"
+                    f"<b>Day Change:</b> {chg_emoji} <code>{chg:+.2f} ({chg_pct:+.2f}%)</code>\n\n"
+                )
+
+            spread_status = "🟢 TIGHT" if spread_pts <= 35 else ("🟡 MODERATE" if spread_pts <= 60 else "🔴 WIDE")
+
             msg = (
                 f"🏷️ <b>LIVE {self.settings.symbol} TICKER</b>\n"
-                f"{'━' * 25}\n\n"
+                f"{'━' * 28}\n\n"
                 f"<b>Bid:</b> <code>${bid:,.2f}</code>\n"
                 f"<b>Ask:</b> <code>${ask:,.2f}</code>\n"
-                f"<b>Spread:</b> <code>{spread:.1f} points</code>\n"
+                f"<b>Spread:</b> <code>{spread_pts:.1f} pts (${spread_cash:.2f})</code> — {spread_status}\n\n"
+                f"{range_info}"
                 f"<b>Time:</b> {datetime.now(timezone.utc).strftime('%H:%M:%S UTC')}"
             )
         else:
-            msg = f"🏷️ <b>{self.settings.symbol} TICKER</b>\n\n<i>MT5 not connected or markets closed.</i>"
+            msg = (
+                f"🏷️ <b>{self.settings.symbol} TICKER</b>\n\n"
+                f"<i>MT5 terminal offline or market closed for weekend. Ensure MT5 is running on your desktop.</i>"
+            )
 
         keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton("🔄 Refresh Price", callback_data="cb_price")],
-            [InlineKeyboardButton("🔙 Main Menu", callback_data="cb_menu")],
+            [
+                InlineKeyboardButton("🎯 Live Signal", callback_data="cb_signal"),
+                InlineKeyboardButton("🧠 Market Regime", callback_data="cb_regime"),
+            ],
+            [
+                InlineKeyboardButton("🔄 Refresh Price", callback_data="cb_price"),
+                InlineKeyboardButton("🔙 Main Menu", callback_data="cb_menu"),
+            ],
         ])
 
         await self._safe_edit_or_reply(update, text=msg, reply_markup=keyboard, parse_mode="HTML")
+
+    async def _handle_signal(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle /signal command or button: On-demand live confluence & technical breakdown."""
+        if not self._is_authorized(update):
+            return
+
+        loading_msg = "⏳ <i>Analyzing live market data, indicators, and AI confluence for XAUUSD...</i>"
+        await self._safe_edit_or_reply(update, text=loading_msg, parse_mode="HTML")
+
+        try:
+            mt5_obj = self._get_mt5()
+            is_conn = mt5_obj.is_connected() if callable(getattr(mt5_obj, "is_connected", None)) else getattr(mt5_obj, "is_connected", False)
+            if not is_conn and hasattr(mt5_obj, "connect"):
+                is_conn = mt5_obj.connect(max_retries=1, retry_delay=0.1)
+
+            if not is_conn:
+                await self._safe_edit_or_reply(
+                    update,
+                    text="⚠️ <b>MT5 Offline:</b> Cannot calculate live signals. Please ensure MetaTrader 5 is running.",
+                    reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Main Menu", callback_data="cb_menu")]]),
+                    parse_mode="HTML",
+                )
+                return
+
+            tick = mt5_obj.get_current_tick(self.settings.symbol, auto_reconnect=False)
+            curr_price = tick.get("bid", 0.0) if tick else 0.0
+
+            from analysis.technical import TechnicalAnalyzer
+            from strategies.scalping import ScalpingStrategy
+            from strategies.day_trading import DayTradingStrategy
+            from strategies.regime_detector import RegimeDetector
+
+            ta = TechnicalAnalyzer()
+            rd = RegimeDetector()
+            scalper = ScalpingStrategy()
+            day_trader = DayTradingStrategy()
+
+            df_m5 = mt5_obj.get_rates(timeframe="M5", count=100, auto_reconnect=False)
+            df_h1 = mt5_obj.get_rates(timeframe="H1", count=100, auto_reconnect=False)
+
+            m5_sig = None
+            h1_sig = None
+            regime = None
+            if df_m5 is not None and not df_m5.empty:
+                df_m5_ind = ta.add_all_indicators(df_m5.copy())
+                m5_sig = scalper.run(df_m5_ind)
+
+            if df_h1 is not None and not df_h1.empty:
+                df_h1_ind = ta.add_all_indicators(df_h1.copy())
+                h1_sig = day_trader.run(df_h1_ind)
+                regime = rd.analyze(df_h1_ind)
+
+            sentiment_score = crud.get_recent_sentiment(hours=24)
+            sent_dir = "BULLISH" if sentiment_score > 0.1 else ("BEARISH" if sentiment_score < -0.1 else "NEUTRAL")
+
+            def _format_sig(sig):
+                if not sig or not sig.is_actionable:
+                    return "⚪ NEUTRAL / NO SIGNAL"
+                dir_emoji = "🟢" if sig.direction.value == "BUY" else "🔴"
+                return f"{dir_emoji} <b>{sig.direction.value}</b> (Score: <b>{sig.score:.0f}/100</b>)"
+
+            m5_text = _format_sig(m5_sig)
+            h1_text = _format_sig(h1_sig)
+
+            reg_text = regime.regime.value if regime else "UNKNOWN"
+            reg_emoji = "📈" if "BULL" in reg_text else ("📉" if "BEAR" in reg_text else "🔄")
+
+            active_reasons = []
+            if m5_sig and m5_sig.is_actionable and m5_sig.reasons:
+                active_reasons = m5_sig.reasons[:3]
+            elif h1_sig and h1_sig.is_actionable and h1_sig.reasons:
+                active_reasons = h1_sig.reasons[:3]
+
+            reasons_block = ""
+            if active_reasons:
+                reasons_block = "<b>Key Technical Drivers:</b>\n" + "\n".join(f"  • {html.escape(r)}" for r in active_reasons) + "\n\n"
+
+            if m5_sig and m5_sig.is_actionable and m5_sig.score >= 65:
+                rec = f"🟢 <b>STRONG {m5_sig.direction.value} SETUP</b> (Scalp M5)"
+            elif h1_sig and h1_sig.is_actionable and h1_sig.score >= 65:
+                rec = f"🟢 <b>STRONG {h1_sig.direction.value} SETUP</b> (Day Trade H1)"
+            elif (m5_sig and m5_sig.is_actionable) or (h1_sig and h1_sig.is_actionable):
+                sig_dir = m5_sig.direction.value if (m5_sig and m5_sig.is_actionable) else h1_sig.direction.value
+                rec = f"🟡 <b>MODERATE {sig_dir}</b> (Building confluence)"
+            else:
+                rec = "⚪ <b>WAITING</b> — No high-confluence setup right now"
+
+            msg = (
+                f"🎯 <b>LIVE MARKET SIGNAL & CONFLUENCE</b>\n"
+                f"{'━' * 28}\n\n"
+                f"<b>Pair:</b> <code>{self.settings.symbol}</code> | <b>Price:</b> <code>${curr_price:,.2f}</code>\n"
+                f"<b>Profile Mode:</b> <code>{self.settings.active_mode.upper()}</code>\n\n"
+                f"<b>Strategy Signals:</b>\n"
+                f"  • <b>Scalping (M5):</b> {m5_text}\n"
+                f"  • <b>Day Trading (H1):</b> {h1_text}\n\n"
+                f"<b>Market Environment:</b>\n"
+                f"  • Regime: {reg_emoji} <code>{reg_text}</code>\n"
+                f"  • News Sentiment: <code>{sentiment_score:+.2f} ({sent_dir})</code>\n\n"
+                f"{reasons_block}"
+                f"<b>Recommendation:</b>\n{rec}\n\n"
+                f"<b>Time:</b> {datetime.now(timezone.utc).strftime('%H:%M:%S UTC')}"
+            )
+
+            keyboard = InlineKeyboardMarkup([
+                [
+                    InlineKeyboardButton("📈 View Positions", callback_data="cb_positions"),
+                    InlineKeyboardButton("🏷️ Live Ticker", callback_data="cb_price"),
+                ],
+                [
+                    InlineKeyboardButton("🔄 Refresh Signal", callback_data="cb_signal"),
+                    InlineKeyboardButton("🔙 Main Menu", callback_data="cb_menu"),
+                ],
+            ])
+
+            await self._safe_edit_or_reply(update, text=msg, reply_markup=keyboard, parse_mode="HTML")
+
+        except Exception as e:
+            logger.error(f"Error calculating live signal: {e}", exc_info=True)
+            await self._safe_edit_or_reply(
+                update,
+                text=f"⚠️ <b>Error calculating signal:</b>\n<code>{html.escape(str(e))}</code>",
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Main Menu", callback_data="cb_menu")]]),
+                parse_mode="HTML",
+            )
 
     async def _handle_pause(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Pause the trading bot."""
@@ -930,10 +1127,12 @@ class TelegramNotifier:
         if not self._is_authorized(update):
             return
 
-        mt5_obj = getattr(self.bot_instance, "mt5", None)
+        mt5_obj = self._get_mt5()
         is_conn = False
         if mt5_obj:
-            is_conn = mt5_obj.is_connected() or mt5_obj.connect(max_retries=1, retry_delay=0.1)
+            is_conn = mt5_obj.is_connected() if callable(getattr(mt5_obj, "is_connected", None)) else getattr(mt5_obj, "is_connected", False)
+            if not is_conn and hasattr(mt5_obj, "connect"):
+                is_conn = mt5_obj.connect(max_retries=1, retry_delay=0.1)
 
         if not is_conn:
             msg = (
@@ -966,10 +1165,12 @@ class TelegramNotifier:
         if not self._is_authorized(update):
             return
 
-        mt5_obj = getattr(self.bot_instance, "mt5", None)
+        mt5_obj = self._get_mt5()
         is_conn = False
         if mt5_obj:
-            is_conn = mt5_obj.is_connected() or mt5_obj.connect(max_retries=1, retry_delay=0.1)
+            is_conn = mt5_obj.is_connected() if callable(getattr(mt5_obj, "is_connected", None)) else getattr(mt5_obj, "is_connected", False)
+            if not is_conn and hasattr(mt5_obj, "connect"):
+                is_conn = mt5_obj.connect(max_retries=1, retry_delay=0.1)
 
         if not is_conn:
             msg = (
@@ -1025,11 +1226,8 @@ class TelegramNotifier:
                 success = te.close_trade(ticket, reason="telegram_manual")
             elif hasattr(te, "close_position"):
                 success = te.close_position(ticket, comment="Telegram manual close")
-        elif self.bot_instance and hasattr(self.bot_instance, "mt5"):
-            success = self.bot_instance.mt5.close_position(ticket, comment="telegram_manual")
-        else:
-            from core.mt5_connector import MT5Connector
-            mt5_obj = MT5Connector()
+        if not success:
+            mt5_obj = self._get_mt5()
             success = mt5_obj.close_position(ticket, comment="telegram_manual")
 
         if success:
@@ -1048,13 +1246,8 @@ class TelegramNotifier:
         if not self._is_authorized(update):
             return
 
-        success = False
-        if self.bot_instance and hasattr(self.bot_instance, "mt5"):
-            success = self.bot_instance.mt5.cancel_order(ticket)
-        else:
-            from core.mt5_connector import MT5Connector
-            mt5_obj = MT5Connector()
-            success = mt5_obj.cancel_order(ticket)
+        mt5_obj = self._get_mt5()
+        success = mt5_obj.cancel_order(ticket)
 
         if success:
             msg = f"🗑️ Scheduled Pending Order <b>#{ticket}</b> canceled successfully."
@@ -1067,6 +1260,96 @@ class TelegramNotifier:
         ])
         await self._safe_edit_or_reply(update, text=msg, reply_markup=keyboard, parse_mode="HTML")
 
+    # ── Risk & Sizing Parameter Persistence ──────────────────────────────
+
+    def _persist_risk_params(self, key: str, value: float):
+        """Persist risk parameter update to config/trading_params.yaml under risk section."""
+        try:
+            from config.settings import CONFIG_DIR
+            import yaml
+            params_path = CONFIG_DIR / "trading_params.yaml"
+            if params_path.exists():
+                with open(params_path, "r", encoding="utf-8") as f:
+                    data = yaml.safe_load(f) or {}
+                if "risk" not in data:
+                    data["risk"] = {}
+                data["risk"][key] = value
+                with open(params_path, "w", encoding="utf-8") as f:
+                    yaml.safe_dump(data, f, sort_keys=False)
+        except Exception as e:
+            logger.error(f"Failed to persist risk params to YAML: {e}")
+
+    def _apply_lot_update(self, lot: float):
+        """Apply new default lot size to settings and risk manager."""
+        self.settings.trading_params.setdefault("risk", {})["default_lot_size"] = lot
+        if self.bot_instance and hasattr(self.bot_instance, "risk_manager"):
+            rm = self.bot_instance.risk_manager
+            rm.default_lot = lot
+            rm._default_lot_override = lot
+        self._persist_risk_params("default_lot_size", lot)
+        logger.info(f"Default lot size updated to {lot} via Telegram")
+
+    def _apply_risk_update(self, risk_pct: float):
+        """Apply new risk percent to settings and risk manager."""
+        self.settings.trading_params.setdefault("risk", {})["max_risk_per_trade_pct"] = risk_pct
+        if self.bot_instance and hasattr(self.bot_instance, "risk_manager"):
+            rm = self.bot_instance.risk_manager
+            rm.max_risk_pct = risk_pct
+            rm._max_risk_pct_override = risk_pct
+        self._persist_risk_params("max_risk_per_trade_pct", risk_pct)
+        logger.info(f"Risk per trade updated to {risk_pct}% via Telegram")
+
+    async def _show_risk_menu(self, update: Update, context: Optional[ContextTypes.DEFAULT_TYPE] = None):
+        """Show interactive risk and position sizing menu with one-tap preset buttons."""
+        if not self._is_authorized(update):
+            return
+
+        risk_cfg = self.settings.risk_params
+        current_lot = risk_cfg.get("default_lot_size", 0.02)
+        current_risk = risk_cfg.get("max_risk_per_trade_pct", 2.0)
+        max_trades = risk_cfg.get("max_concurrent_trades", 4)
+        max_spread = risk_cfg.get("max_spread_points", 70)
+
+        msg = (
+            f"⚙️ <b>RISK & POSITION SIZING SETTINGS</b>\n"
+            f"{'━' * 28}\n\n"
+            f"<b>Profile:</b> <code>{self.settings.active_mode.upper()}</code>\n"
+            f"<b>Current Default Lot:</b> <code>{current_lot:.2f} lots</code>\n"
+            f"<b>Current Risk Per Trade:</b> <code>{current_risk:.1f}%</code>\n"
+            f"<b>Max Concurrent Trades:</b> <code>{max_trades}</code>\n"
+            f"<b>Max Spread:</b> <code>{max_spread} pts</code>\n\n"
+            f"<i>Tap a quick preset button below or type <code>/setlot &lt;size&gt;</code> / <code>/setrisk &lt;pct&gt;</code>:</i>"
+        )
+
+        def _lot_btn(val):
+            mark = "✅ " if round(current_lot, 2) == round(val, 2) else ""
+            return InlineKeyboardButton(f"{mark}{val} Lot", callback_data=f"cb_set_lot_{val}")
+
+        def _risk_btn(val):
+            mark = "✅ " if round(current_risk, 1) == round(val, 1) else ""
+            return InlineKeyboardButton(f"{mark}{val:.1f}%", callback_data=f"cb_set_risk_{val}")
+
+        keyboard = InlineKeyboardMarkup([
+            [
+                _lot_btn(0.01),
+                _lot_btn(0.02),
+                _lot_btn(0.05),
+                _lot_btn(0.10),
+            ],
+            [
+                _risk_btn(1.0),
+                _risk_btn(1.5),
+                _risk_btn(2.0),
+                _risk_btn(3.0),
+            ],
+            [
+                InlineKeyboardButton("🎛️ Change Profile Mode", callback_data="cb_mode_menu"),
+                InlineKeyboardButton("🔙 Main Menu", callback_data="cb_menu"),
+            ],
+        ])
+
+        await self._safe_edit_or_reply(update, text=msg, reply_markup=keyboard, parse_mode="HTML")
+
     async def _handle_set_lot(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Set default lot size via /setlot <size>."""
         if not self._is_authorized(update):
@@ -1074,7 +1357,7 @@ class TelegramNotifier:
 
         if not context.args:
             await update.effective_message.reply_text(
-                "Usage: <code>/setlot 0.02</code> (range: 0.01 to 0.10)", parse_mode="HTML"
+                "Usage: <code>/setlot 0.02</code> (range: 0.01 to 0.50)", parse_mode="HTML"
             )
             return
 
@@ -1084,16 +1367,12 @@ class TelegramNotifier:
                 await update.effective_message.reply_text("❌ Lot size must be between 0.01 and 0.50.")
                 return
 
-            # Update live settings
-            self.settings.trading_params.setdefault("risk", {})["default_lot_size"] = new_lot
-            if self.bot_instance and hasattr(self.bot_instance, "risk_manager"):
-                self.bot_instance.risk_manager.default_lot = new_lot
+            self._apply_lot_update(new_lot)
 
             await update.effective_message.reply_text(
-                f"✅ <b>Default Lot Size Updated:</b> <code>{new_lot}</code>",
+                f"✅ <b>Default Lot Size Updated & Persisted:</b> <code>{new_lot}</code>",
                 parse_mode="HTML",
             )
-            logger.info(f"Default lot size changed to {new_lot} via Telegram")
 
         except ValueError:
             await update.effective_message.reply_text("❌ Invalid number format. Example: <code>/setlot 0.02</code>")
@@ -1115,15 +1394,12 @@ class TelegramNotifier:
                 await update.effective_message.reply_text("❌ Risk per trade must be between 0.5% and 5.0%.")
                 return
 
-            self.settings.trading_params.setdefault("risk", {})["max_risk_per_trade_pct"] = new_risk
-            if self.bot_instance and hasattr(self.bot_instance, "risk_manager"):
-                self.bot_instance.risk_manager.max_risk_pct = new_risk
+            self._apply_risk_update(new_risk)
 
             await update.effective_message.reply_text(
-                f"✅ <b>Max Risk Per Trade Updated:</b> <code>{new_risk:.1f}%</code>",
+                f"✅ <b>Max Risk Per Trade Updated & Persisted:</b> <code>{new_risk:.1f}%</code>",
                 parse_mode="HTML",
             )
-            logger.info(f"Risk per trade changed to {new_risk}% via Telegram")
 
         except ValueError:
             await update.effective_message.reply_text("❌ Invalid number format. Example: <code>/setrisk 2.0</code>")
@@ -1143,13 +1419,15 @@ class TelegramNotifier:
             f"<b>Market & Account Monitoring:</b>\n"
             f"• <code>/status</code> — Account balance, equity, and bot health\n"
             f"• <code>/positions</code> — List open trades with floating P&L\n"
+            f"• <code>/signal</code> — Live market signal & multi-indicator confluence\n"
+            f"• <code>/price</code> — Real-time Gold Bid, Ask, Spread & 24H Range\n"
             f"• <code>/trades</code> — Recent closed trade log\n"
             f"• <code>/pnl</code> — Today's and 30-day performance\n"
             f"• <code>/news</code> — Macro news and Gemini sentiment\n"
             f"• <code>/regime</code> — Current market regime & active strategies\n"
-            f"• <code>/learning</code> — Self-learning performance & weight adaptations\n"
-            f"• <code>/price</code> — Real-time Gold Bid, Ask, Spread\n\n"
+            f"• <code>/learning</code> — Self-learning performance & weight adaptations\n\n"
             f"<b>Remote Control & Parameters:</b>\n"
+            f"• <code>/risk</code> — Interactive lot size & risk percent settings\n"
             f"• <code>/pause</code> — Pause opening new trades\n"
             f"• <code>/resume</code> — Resume automated trading\n"
             f"• <code>/closeall</code> — Flatten all open positions immediately\n"
@@ -1202,6 +1480,22 @@ class TelegramNotifier:
                 await self._handle_learning(update, context)
             elif data == "cb_price":
                 await self._handle_price(update, context)
+            elif data == "cb_signal":
+                await self._handle_signal(update, context)
+            elif data == "cb_risk_menu":
+                await self._show_risk_menu(update, context)
+            elif data.startswith("cb_set_lot_"):
+                lot_val = float(data.replace("cb_set_lot_", ""))
+                self._apply_lot_update(lot_val)
+                if query:
+                    await query.answer(f"✅ Default lot set to {lot_val}", show_alert=True)
+                await self._show_risk_menu(update, context)
+            elif data.startswith("cb_set_risk_"):
+                risk_val = float(data.replace("cb_set_risk_", ""))
+                self._apply_risk_update(risk_val)
+                if query:
+                    await query.answer(f"✅ Risk per trade set to {risk_val:.1f}%", show_alert=True)
+                await self._show_risk_menu(update, context)
             elif data == "cb_pause":
                 await self._handle_pause(update, context)
             elif data == "cb_resume":
@@ -1249,6 +1543,8 @@ class TelegramNotifier:
             self._app.add_handler(CommandHandler("status", self._handle_status))
             self._app.add_handler(CommandHandler(["mode", "setmode"], self._handle_mode))
             self._app.add_handler(CommandHandler(["positions", "pos"], self._handle_positions))
+            self._app.add_handler(CommandHandler(["signal", "signals"], self._handle_signal))
+            self._app.add_handler(CommandHandler(["risk", "sizing"], self._show_risk_menu))
             self._app.add_handler(CommandHandler("trades", self._handle_trades))
             self._app.add_handler(CommandHandler("pnl", self._handle_pnl))
             self._app.add_handler(CommandHandler("news", self._handle_news))
@@ -1290,12 +1586,14 @@ class TelegramNotifier:
                     BotCommand("mode", "Switch Trading Profile (Safe / Moderate / Aggressive)"),
                     BotCommand("status", "Account Balance, Equity & Health"),
                     BotCommand("positions", "Open Positions & Floating P&L"),
+                    BotCommand("signal", "Live Market Signal & Confluence Analysis"),
+                    BotCommand("risk", "Interactive Risk & Lot Settings"),
+                    BotCommand("price", "Live Gold Price & Spread"),
                     BotCommand("pnl", "Daily & Monthly P&L Performance"),
                     BotCommand("trades", "Recent Trade History"),
                     BotCommand("news", "Macro News & Gemini Sentiment"),
                     BotCommand("regime", "Market Regime & Active Strategies"),
                     BotCommand("learning", "Autonomous Self-Learning Metrics"),
-                    BotCommand("price", "Live Gold Price & Spread"),
                     BotCommand("pause", "Pause Automatic Order Execution"),
                     BotCommand("resume", "Resume Automatic Order Execution"),
                     BotCommand("setlot", "Set Default Lot Size (e.g. /setlot 0.02)"),
@@ -1330,7 +1628,7 @@ class TelegramNotifier:
     # ── Outbound Notifications ────────────────────────────────────────────
 
     async def send_message(self, text: str, parse_mode: str = "HTML", reply_markup: Any = None):
-        """Send a message to the configured owner chat."""
+        """Send a message to the configured owner chat with entity parse fallback."""
         if not self._enabled:
             return
 
@@ -1349,6 +1647,24 @@ class TelegramNotifier:
             )
         except Exception as e:
             err_msg = str(e)
+            # If HTML parsing failed, strip tags and resend as plain text
+            if "parse entities" in err_msg.lower() and parse_mode:
+                try:
+                    import re
+                    plain = re.sub(r"<[^>]+>", "", text)
+                    if self._app and self._app.bot:
+                        bot = self._app.bot
+                    else:
+                        from telegram import Bot
+                        bot = Bot(token=self.bot_token)
+                    await bot.send_message(
+                        chat_id=self.chat_id,
+                        text=plain,
+                        reply_markup=reply_markup,
+                    )
+                    return
+                except Exception:
+                    pass
             if self.bot_token:
                 err_msg = err_msg.replace(self.bot_token, "***BOT_TOKEN***")
             logger.error(f"Telegram send error: {err_msg}")
@@ -1475,9 +1791,19 @@ class TelegramNotifier:
         await self.send_message(msg, reply_markup=keyboard)
 
     async def send_risk_alert(self, message: str):
-        """Send risk management alert."""
-        msg = f"⚠️ <b>RISK CONTROLLER ALERT</b>\n\n{message}"
-        await self.send_message(msg)
+        """Send risk management alert with emergency action buttons."""
+        msg = f"⚠️ <b>RISK CONTROLLER ALERT</b>\n\n{html.escape(message)}"
+        keyboard = InlineKeyboardMarkup([
+            [
+                InlineKeyboardButton("⏸️ Pause Trading", callback_data="cb_pause"),
+                InlineKeyboardButton("🛑 EMERGENCY CLOSE ALL", callback_data="cb_confirm_closeall"),
+            ],
+            [
+                InlineKeyboardButton("📊 View Status", callback_data="cb_status"),
+                InlineKeyboardButton("🔙 Main Menu", callback_data="cb_menu"),
+            ],
+        ])
+        await self.send_message(msg, reply_markup=keyboard)
 
     async def send_bot_status(self, status: str, details: str = ""):
         """Send bot status update."""
@@ -1505,6 +1831,8 @@ class TelegramNotifier:
         app.add_handler(CommandHandler("status", self._handle_status))
         app.add_handler(CommandHandler(["mode", "setmode"], self._handle_mode))
         app.add_handler(CommandHandler(["positions", "pos"], self._handle_positions))
+        app.add_handler(CommandHandler(["signal", "signals"], self._handle_signal))
+        app.add_handler(CommandHandler(["risk", "sizing"], self._show_risk_menu))
         app.add_handler(CommandHandler("trades", self._handle_trades))
         app.add_handler(CommandHandler("pnl", self._handle_pnl))
         app.add_handler(CommandHandler("news", self._handle_news))
@@ -1530,12 +1858,14 @@ class TelegramNotifier:
                     BotCommand("mode", "Switch Trading Profile (Safe / Moderate / Aggressive)"),
                     BotCommand("status", "Account Balance, Equity & Health"),
                     BotCommand("positions", "Open Positions & Floating P&L"),
+                    BotCommand("signal", "Live Market Signal & Confluence Analysis"),
+                    BotCommand("risk", "Interactive Risk & Lot Settings"),
+                    BotCommand("price", "Live Gold Price & Spread"),
                     BotCommand("pnl", "Daily & Monthly P&L Performance"),
                     BotCommand("trades", "Recent Trade History"),
                     BotCommand("news", "Macro News & Gemini Sentiment"),
                     BotCommand("regime", "Market Regime & Active Strategies"),
                     BotCommand("learning", "Autonomous Self-Learning Metrics"),
-                    BotCommand("price", "Live Gold Price & Spread"),
                     BotCommand("pause", "Pause Automatic Order Execution"),
                     BotCommand("resume", "Resume Automatic Order Execution"),
                     BotCommand("setlot", "Set Default Lot Size (e.g. /setlot 0.02)"),

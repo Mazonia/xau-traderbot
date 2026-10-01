@@ -93,7 +93,7 @@ class NewsAnalyzer:
             "brics", "de-dollarization", "dedollarization", "central bank gold", "gold buying",
             "sovereign debt", "debt crisis", "sanctions", "stagflation", "yield curve inversion",
             "debt ceiling", "quantitative easing", "safe haven demand", "rate pause",
-            "currency debasement", "fiscal deficit", "banking crisis",
+            "currency debasement", "fiscal deficit", "banking crisis", "market selloff", "equity crash", "ai bubble burst",
         ]
         
         # Bearish factors for Gold (Rate hikes, hawkish, strong dollar, peace, high yields)
@@ -104,7 +104,7 @@ class NewsAnalyzer:
             "ceasefire", "peace", "de-escalat", "diplomacy", "strong job", "nfp beat", "robust job",
             "yield surge", "yields rise", "yields jump",
             # 2025-2026 bearish Gold catalysts
-            "quantitative tightening", "rate increase", "ai bubble burst", "risk on rally",
+            "quantitative tightening", "rate increase", "ai boom", "tech rally", "equity rally", "stock market rally", "risk on rally",
             "dollar dominance", "crypto surge", "bitcoin rally",
         ]
         
