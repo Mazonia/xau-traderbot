@@ -19,7 +19,6 @@ We take the security of this software very seriously, particularly because it ma
 
 If you discover a security vulnerability, **please do not open a public issue**. Instead, submit a security report directly to the maintainers:
 
-- **Email**: [contact@mazonia.dev](mailto:contact@mazonia.dev)
 - Alternatively, submit a private vulnerability disclosure via GitHub Security Advisories if available on the repository.
 
 ### What to Include in Your Report
