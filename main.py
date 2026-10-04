@@ -48,7 +48,12 @@ def parse_args():
     parser.add_argument(
         "--telegram",
         action="store_true",
-        help="Start interactive Telegram Command Center only",
+        help="Start interactive Telegram Command Center only (in standby mode)",
+    )
+    parser.add_argument(
+        "--standby",
+        action="store_true",
+        help="Start bot in standby mode (Telegram active, trading paused until started via Telegram)",
     )
     parser.add_argument(
         "--demo",
@@ -122,34 +127,15 @@ def start_dashboard():
 
 
 def run_telegram():
-    """Run interactive Telegram Command Center in standalone mode with native long-polling."""
-    from notifications.telegram_bot import TelegramNotifier
-    from core.mt5_connector import MT5Connector
+    """Start the full Trading Bot in Standby Mode with 2-way Telegram Command Center active."""
+    from core.bot import TradingBot
 
     logger.info("=" * 60)
-    logger.info("  Starting Telegram Command Center (Standalone Mode)")
+    logger.info("  Starting XAUUSD Bot in Standby Mode (Telegram Controlled)")
     logger.info("=" * 60)
 
-    mt5 = MT5Connector()
-    mt5.connect(max_retries=1, retry_delay=1)
-
-    from strategies.regime_detector import RegimeDetector
-    from analysis.technical import TechnicalAnalyzer
-
-    class StandaloneBot:
-        def __init__(self, mt5_conn):
-            self.mt5 = mt5_conn
-            self.regime_detector = RegimeDetector()
-            self.technical = TechnicalAnalyzer()
-            self._last_regime = None
-            self._trading_paused = False
-
-    bot_wrapper = StandaloneBot(mt5)
-    notifier = TelegramNotifier(bot_instance=bot_wrapper)
-    try:
-        notifier.run_standalone()
-    except KeyboardInterrupt:
-        logger.info("Telegram Bot terminated by user")
+    bot = TradingBot(start_paused=True)
+    asyncio.run(bot.start())
 
 
 def run_backtest():
@@ -206,7 +192,8 @@ def main():
     # Start the live trading bot
     from core.bot import TradingBot
 
-    bot = TradingBot()
+    start_paused = getattr(args, "standby", False)
+    bot = TradingBot(start_paused=start_paused)
     asyncio.run(bot.start())
 
 

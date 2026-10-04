@@ -54,7 +54,7 @@ class TradingBot:
     10. Repeat
     """
 
-    def __init__(self):
+    def __init__(self, start_paused: bool = False):
         self.settings = get_settings()
         self._running = False
         self._shutdown_event = asyncio.Event()
@@ -99,7 +99,7 @@ class TradingBot:
         self._cycle_count = 0
         self._last_news_check: Optional[datetime] = None
         self._last_regime = None
-        self._trading_paused = False
+        self._trading_paused = start_paused
 
     def _setup_logging(self):
         """Configure loguru logging."""
@@ -169,9 +169,13 @@ class TradingBot:
         balance_str = f"${account['balance']:,.2f}" if account else "N/A"
         active_profile = self.settings.active_mode.capitalize()
         profile_emoji = {"Safe": "🟢", "Moderate": "🟡", "Aggressive": "🔴"}.get(active_profile, "⚪")
+        
+        status_title = "STANDBY (Trading Off)" if self._trading_paused else "RUNNING"
+        trading_state_desc = "🟡 STANDBY — Tap [▶️ Start Trading] or send /startbot from your phone to start trading" if self._trading_paused else "🟢 ACTIVE & SCANNING"
+        
         await self.telegram.send_bot_status(
-            "RUNNING",
-            f"Mode: {mode}\nBalance: {balance_str}\nSymbol: XAUUSD\nTrading Profile: {profile_emoji} {active_profile}"
+            status_title,
+            f"Mode: {mode}\nBalance: {balance_str}\nSymbol: XAUUSD\nTrading Profile: {profile_emoji} {active_profile}\nState: {trading_state_desc}"
         )
 
         # Start interactive 2-way Telegram polling in background
