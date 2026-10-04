@@ -1,6 +1,6 @@
 symbol: XAUUSD
 symbol_suffix: ''
-active_mode: safe
+active_mode: aggressive
 trading_modes:
   safe:
     name: Safe / Conservative

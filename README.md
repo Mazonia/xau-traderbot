@@ -180,6 +180,12 @@ MAX_POSITIONS=3
 
 ## 🚀 Running the Bot
 
+### 🔄 Auto-Start on PC Boot (Background Daemon)
+To configure the bot to automatically start actively trading in the background whenever your PC boots up:
+1. Double-click `install_startup_service.bat`.
+2. The bot will automatically launch in **Active Trading** mode (live or demo) upon startup and connect to MT5.
+3. You can pause, monitor, or stop it anytime using the Telegram remote controller on your phone.
+
 ### Start Full Suite (Trading Bot + Web Dashboard + Telegram Bot)
 ```bash
 python main.py --dashboard
