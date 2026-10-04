@@ -189,11 +189,10 @@ class TelegramNotifier:
     def _get_main_keyboard(self) -> InlineKeyboardMarkup:
         """Create the primary interactive Command Center keyboard."""
         paused = getattr(self.bot_instance, "_trading_paused", False)
-        pause_btn = (
-            InlineKeyboardButton("▶️ Start / Resume Trading", callback_data="cb_resume")
-            if paused
-            else InlineKeyboardButton("⏸️ Pause / Standby Trading", callback_data="cb_pause")
-        )
+        if paused:
+            main_action_btn = InlineKeyboardButton("🚀 START TRADING BOT", callback_data="cb_resume")
+        else:
+            main_action_btn = InlineKeyboardButton("⏹️ STOP TRADING BOT", callback_data="cb_pause")
 
         curr_mode = self.settings.active_mode.upper()
         mode_icons = {"SAFE": "🛡️", "MODERATE": "⚖️", "AGGRESSIVE": "⚡"}
@@ -201,6 +200,9 @@ class TelegramNotifier:
         mode_btn = InlineKeyboardButton(f"{icon} Profile Mode: {curr_mode} ⚙️", callback_data="cb_mode_menu")
 
         keyboard = [
+            [
+                main_action_btn,
+            ],
             [
                 InlineKeyboardButton("📊 Status & Balance", callback_data="cb_status"),
                 InlineKeyboardButton("📈 Open Positions", callback_data="cb_positions"),
@@ -225,11 +227,10 @@ class TelegramNotifier:
                 mode_btn,
             ],
             [
-                pause_btn,
                 InlineKeyboardButton("🛑 EMERGENCY CLOSE ALL", callback_data="cb_confirm_closeall"),
+                InlineKeyboardButton("🔄 Refresh Dashboard", callback_data="cb_menu"),
             ],
             [
-                InlineKeyboardButton("🔄 Refresh Dashboard", callback_data="cb_menu"),
                 InlineKeyboardButton("📖 Help & Commands", callback_data="cb_help"),
             ],
         ]
@@ -277,16 +278,17 @@ class TelegramNotifier:
         mode_icon = mode_icons.get(active_mode, "🎛️")
 
         paused = getattr(self.bot_instance, "_trading_paused", False)
-        status_str = "🟡 STANDBY / PAUSED (Trading Off)" if paused else f"🟢 ACTIVE & RUNNING ({mode})"
+        status_str = "🟡 STANDBY (Trading Off — Ready to Start)" if paused else f"🟢 LIVE TRADING ACTIVE ({mode})"
 
         text = (
             f"⚡ <b>XAUUSD AI TRADING BOT — COMMAND CENTER</b> ⚡\n\n"
-            f"<b>Status:</b> {status_str}\n"
+            f"<b>PC Service:</b> 🔌 Online & Connected\n"
+            f"<b>Trading Engine:</b> {status_str}\n"
             f"<b>Active Mode:</b> {mode_icon} <code>{active_mode}</code>\n"
             f"<b>Symbol:</b> <code>{self.settings.symbol}</code>\n"
             f"<b>Lot Size:</b> <code>{self.settings.risk_params.get('default_lot_size', 0.02)}</code>\n"
             f"<b>Time:</b> {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')}\n\n"
-            f"Tap an action button below to monitor or control your bot from your phone:"
+            f"<i>Tap below to start or stop the trading engine remotely from your phone:</i>"
         )
         await self._safe_edit_or_reply(
             update,
@@ -984,43 +986,53 @@ class TelegramNotifier:
                 parse_mode="HTML",
             )
 
-    async def _handle_pause(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Pause the trading bot."""
+    async def _handle_pause(self, update: Update, context: Optional[ContextTypes.DEFAULT_TYPE] = None):
+        """Pause the trading bot (Switch to Standby mode)."""
         if not self._is_authorized(update):
             return
 
         if self.bot_instance:
             self.bot_instance._trading_paused = True
             logger.warning("Bot trading paused via Telegram remote control")
-            msg = "⏸️ <b>Trading PAUSED</b>\n\nThe bot will NOT open new trades. Existing positions will still be managed by trailing stops."
+            curr_mode = self.settings.active_mode.upper()
+            msg = (
+                f"⏸️ <b>TRADING ENGINE PAUSED (STANDBY)</b>\n"
+                f"{'━' * 28}\n\n"
+                f"🟡 <b>Trading is now in STANDBY mode.</b>\n"
+                f"• New trades will <b>NOT</b> be opened.\n"
+                f"• Existing open positions are still actively managed by trailing stops.\n"
+                f"• Active Profile: <code>{curr_mode}</code>\n\n"
+                f"<i>Tap <b>🚀 START TRADING BOT</b> below or send <code>/startbot</code> anytime from your phone to start live trading.</i>"
+            )
         else:
             msg = "⚠️ Bot instance not linked."
 
-        keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton("▶️ Resume Trading", callback_data="cb_resume")],
-            [InlineKeyboardButton("🔙 Main Menu", callback_data="cb_menu")],
-        ])
+        await self._safe_edit_or_reply(update, text=msg, reply_markup=self._get_main_keyboard(), parse_mode="HTML")
 
-        await self._safe_edit_or_reply(update, text=msg, reply_markup=keyboard, parse_mode="HTML")
-
-    async def _handle_resume(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Resume the trading bot."""
+    async def _handle_resume(self, update: Update, context: Optional[ContextTypes.DEFAULT_TYPE] = None):
+        """Resume / Start the trading bot."""
         if not self._is_authorized(update):
             return
 
         if self.bot_instance:
             self.bot_instance._trading_paused = False
             logger.info("Bot trading resumed via Telegram remote control")
-            msg = "▶️ <b>Trading RESUMED</b>\n\nAutomated strategy scanning and execution is active."
+            curr_mode = self.settings.active_mode.upper()
+            lot = self.settings.risk_params.get("default_lot_size", 0.02)
+            msg = (
+                f"🚀 <b>TRADING ENGINE ACTIVATED</b>\n"
+                f"{'━' * 28}\n\n"
+                f"🟢 <b>Automated trading is LIVE & SCANNING!</b>\n"
+                f"• Pair: <code>{self.settings.symbol}</code>\n"
+                f"• Profile: <code>{curr_mode}</code>\n"
+                f"• Default Lot: <code>{lot}</code>\n\n"
+                f"The bot is actively evaluating technical indicators, AI predictions, and macro sentiment for high-confluence setups.\n\n"
+                f"<i>Tap <b>⏹️ STOP TRADING BOT</b> below or send <code>/stopbot</code> anytime to pause trading.</i>"
+            )
         else:
             msg = "⚠️ Bot instance not linked."
 
-        keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton("📊 View Status", callback_data="cb_status")],
-            [InlineKeyboardButton("🔙 Main Menu", callback_data="cb_menu")],
-        ])
-
-        await self._safe_edit_or_reply(update, text=msg, reply_markup=keyboard, parse_mode="HTML")
+        await self._safe_edit_or_reply(update, text=msg, reply_markup=self._get_main_keyboard(), parse_mode="HTML")
 
     async def _handle_mode(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Handle /mode [safe|moderate|aggressive] or show mode menu."""
@@ -1534,87 +1546,94 @@ class TelegramNotifier:
     # ── Background Polling Lifecycle ──────────────────────────────────────
 
     async def start_polling(self):
-        """Start the interactive Telegram bot polling in the background."""
+        """Start the interactive Telegram bot polling in the background with network auto-retry."""
         if not self._enabled:
             return
 
-        try:
-            self._app = ApplicationBuilder().token(self.bot_token).build()
-
-            # Register command handlers
-            self._app.add_handler(CommandHandler(["start", "menu"], self._handle_start))
-            self._app.add_handler(CommandHandler("status", self._handle_status))
-            self._app.add_handler(CommandHandler(["mode", "setmode"], self._handle_mode))
-            self._app.add_handler(CommandHandler(["positions", "pos"], self._handle_positions))
-            self._app.add_handler(CommandHandler(["signal", "signals"], self._handle_signal))
-            self._app.add_handler(CommandHandler(["risk", "sizing"], self._show_risk_menu))
-            self._app.add_handler(CommandHandler("trades", self._handle_trades))
-            self._app.add_handler(CommandHandler("pnl", self._handle_pnl))
-            self._app.add_handler(CommandHandler("news", self._handle_news))
-            self._app.add_handler(CommandHandler("regime", self._handle_regime))
-            self._app.add_handler(CommandHandler("learning", self._handle_learning))
-            self._app.add_handler(CommandHandler("price", self._handle_price))
-            self._app.add_handler(CommandHandler(["pause", "stopbot", "stop_trading"], self._handle_pause))
-            self._app.add_handler(CommandHandler(["resume", "startbot", "start_trading"], self._handle_resume))
-            self._app.add_handler(CommandHandler("closeall", self._handle_confirm_closeall))
-            self._app.add_handler(CommandHandler("setlot", self._handle_set_lot))
-            self._app.add_handler(CommandHandler("setrisk", self._handle_set_risk))
-            self._app.add_handler(CommandHandler("help", self._handle_help))
-
-            # Register callback button router
-            self._app.add_handler(CallbackQueryHandler(self._callback_router))
-
-            # Register error handler for network/conflict issues
-            async def _on_telegram_error(update: object, context: ContextTypes.DEFAULT_TYPE):
-                err = context.error
-                err_msg = str(err)
-                if "Conflict" in type(err).__name__ or "terminated by other getUpdates" in err_msg:
-                    logger.warning(
-                        "⚠️ Telegram Conflict: Another bot instance is currently active on Telegram. "
-                        "Trading alerts will still be sent, but interactive chat commands are handled by the other instance."
-                    )
-                else:
-                    logger.error(f"Telegram error: {err}")
-
-            self._app.add_error_handler(_on_telegram_error)
-
-            await self._app.initialize()
-            await self._app.start()
-
-            # Register native Telegram Menu commands for quick auto-complete
+        max_startup_retries = 30
+        for attempt in range(1, max_startup_retries + 1):
             try:
-                from telegram import BotCommand
-                cmds = [
-                    BotCommand("start", "Command Center & Main Menu"),
-                    BotCommand("startbot", "Start / Resume Automated Live Trading"),
-                    BotCommand("stopbot", "Pause / Standby Automated Trading"),
-                    BotCommand("mode", "Switch Trading Profile (Safe / Moderate / Aggressive)"),
-                    BotCommand("status", "Account Balance, Equity & Health"),
-                    BotCommand("positions", "Open Positions & Floating P&L"),
-                    BotCommand("signal", "Live Market Signal & Confluence Analysis"),
-                    BotCommand("risk", "Interactive Risk & Lot Settings"),
-                    BotCommand("price", "Live Gold Price & Spread"),
-                    BotCommand("pnl", "Daily & Monthly P&L Performance"),
-                    BotCommand("trades", "Recent Trade History"),
-                    BotCommand("news", "Macro News & Gemini Sentiment"),
-                    BotCommand("regime", "Market Regime & Active Strategies"),
-                    BotCommand("learning", "Autonomous Self-Learning Metrics"),
-                    BotCommand("setlot", "Set Default Lot Size (e.g. /setlot 0.02)"),
-                    BotCommand("setrisk", "Set Risk % Per Trade (e.g. /setrisk 2.0)"),
-                    BotCommand("closeall", "Emergency Close All Positions"),
-                    BotCommand("help", "Command Cheatsheet & Documentation"),
-                ]
-                await self._app.bot.set_my_commands(cmds)
-                logger.info("⚡ Registered native Telegram Menu commands via set_my_commands")
+                self._app = ApplicationBuilder().token(self.bot_token).build()
+
+                # Register command handlers
+                self._app.add_handler(CommandHandler(["start", "menu"], self._handle_start))
+                self._app.add_handler(CommandHandler(["startbot", "start_trading", "resume"], self._handle_resume))
+                self._app.add_handler(CommandHandler(["stopbot", "stop_trading", "pause"], self._handle_pause))
+                self._app.add_handler(CommandHandler("status", self._handle_status))
+                self._app.add_handler(CommandHandler(["mode", "setmode"], self._handle_mode))
+                self._app.add_handler(CommandHandler(["positions", "pos"], self._handle_positions))
+                self._app.add_handler(CommandHandler(["signal", "signals"], self._handle_signal))
+                self._app.add_handler(CommandHandler(["risk", "sizing"], self._show_risk_menu))
+                self._app.add_handler(CommandHandler("trades", self._handle_trades))
+                self._app.add_handler(CommandHandler("pnl", self._handle_pnl))
+                self._app.add_handler(CommandHandler("news", self._handle_news))
+                self._app.add_handler(CommandHandler("regime", self._handle_regime))
+                self._app.add_handler(CommandHandler("learning", self._handle_learning))
+                self._app.add_handler(CommandHandler("price", self._handle_price))
+                self._app.add_handler(CommandHandler("closeall", self._handle_confirm_closeall))
+                self._app.add_handler(CommandHandler("setlot", self._handle_set_lot))
+                self._app.add_handler(CommandHandler("setrisk", self._handle_set_risk))
+                self._app.add_handler(CommandHandler("help", self._handle_help))
+
+                # Register callback button router
+                self._app.add_handler(CallbackQueryHandler(self._callback_router))
+
+                # Register error handler for network/conflict issues
+                async def _on_telegram_error(update: object, context: ContextTypes.DEFAULT_TYPE):
+                    err = context.error
+                    err_msg = str(err)
+                    if "Conflict" in type(err).__name__ or "terminated by other getUpdates" in err_msg:
+                        logger.warning(
+                            "⚠️ Telegram Conflict: Another bot instance is currently active on Telegram. "
+                            "Trading alerts will still be sent, but interactive chat commands are handled by the other instance."
+                        )
+                    else:
+                        logger.error(f"Telegram error: {err}")
+
+                self._app.add_error_handler(_on_telegram_error)
+
+                await self._app.initialize()
+                await self._app.start()
+
+                # Register native Telegram Menu commands for quick auto-complete
+                try:
+                    from telegram import BotCommand
+                    cmds = [
+                        BotCommand("start", "Command Center & Interactive Menu"),
+                        BotCommand("startbot", "🚀 Start / Resume Live Automated Trading"),
+                        BotCommand("stopbot", "⏹️ Pause / Standby Trading"),
+                        BotCommand("status", "📊 Account Balance, Equity & Health"),
+                        BotCommand("positions", "📈 Open Positions & Floating P&L"),
+                        BotCommand("mode", "🎛️ Switch Profile (Safe/Moderate/Aggressive)"),
+                        BotCommand("signal", "🎯 Live Signal & Confluence Analysis"),
+                        BotCommand("price", "🏷️ Live Gold Price & Spread"),
+                        BotCommand("pnl", "💰 Daily & Monthly P&L Performance"),
+                        BotCommand("trades", "📜 Recent Trade History"),
+                        BotCommand("news", "📰 Macro News & Gemini Sentiment"),
+                        BotCommand("regime", "🧠 Market Regime & Active Strategies"),
+                        BotCommand("learning", "🎓 Autonomous Self-Learning Metrics"),
+                        BotCommand("risk", "⚙️ Interactive Risk & Lot Settings"),
+                        BotCommand("setlot", "Set Default Lot Size (e.g. /setlot 0.02)"),
+                        BotCommand("setrisk", "Set Risk % Per Trade (e.g. /setrisk 2.0)"),
+                        BotCommand("closeall", "🛑 Emergency Close All Positions"),
+                        BotCommand("help", "📖 Command Cheatsheet & Documentation"),
+                    ]
+                    await self._app.bot.set_my_commands(cmds)
+                    logger.info("⚡ Registered native Telegram Menu commands via set_my_commands")
+                except Exception as e:
+                    logger.warning(f"Could not register Telegram menu commands: {e}")
+
+                await self._app.updater.start_polling(drop_pending_updates=True)
+                self._is_polling = True
+                logger.info("⚡ Telegram Interactive Bot polling started successfully")
+                return
+
             except Exception as e:
-                logger.warning(f"Could not register Telegram menu commands: {e}")
-
-            await self._app.updater.start_polling(drop_pending_updates=True)
-            self._is_polling = True
-            logger.info("⚡ Telegram Interactive Bot polling started successfully")
-
-        except Exception as e:
-            logger.error(f"Failed to start Telegram polling: {e}")
+                logger.warning(f"Telegram startup attempt {attempt}/{max_startup_retries} waiting for internet connection: {e}")
+                if attempt < max_startup_retries:
+                    await asyncio.sleep(3)
+                else:
+                    logger.error(f"Failed to start Telegram polling after {max_startup_retries} attempts: {e}")
 
     async def stop_polling(self):
         """Stop background polling gracefully."""
@@ -1808,16 +1827,14 @@ class TelegramNotifier:
         ])
         await self.send_message(msg, reply_markup=keyboard)
 
-    async def send_bot_status(self, status: str, details: str = ""):
-        """Send bot status update."""
-        emoji = "🟢" if status == "RUNNING" else ("🔴" if status == "STOPPED" else "🟡")
+    async def send_bot_status(self, status: str, details: str = "", reply_markup: Any = None):
+        """Send bot status update with interactive command center keyboard."""
+        emoji = "🟢" if "RUNNING" in status.upper() or "ACTIVE" in status.upper() else ("🔴" if "STOPPED" in status.upper() else "🟡")
         msg = f"{emoji} <b>XAUUSD Bot Status: {status}</b>"
         if details:
             msg += f"\n\n{details}"
-        keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton("📱 Open Menu", callback_data="cb_menu")],
-        ])
-        await self.send_message(msg, reply_markup=keyboard)
+        markup = reply_markup if reply_markup is not None else self._get_main_keyboard()
+        await self.send_message(msg, reply_markup=markup)
 
 
     def run_standalone(self):

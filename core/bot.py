@@ -164,22 +164,37 @@ class TradingBot:
         if self.settings.demo_mode:
             logger.warning("⚠️ DEMO MODE — Trades will execute on demo account")
 
+        # Start interactive 2-way Telegram polling in background (with network auto-retry)
+        await self.telegram.start_polling()
+
         # Send startup notification via Telegram
         mode = "DEMO" if self.settings.demo_mode else "LIVE"
         balance_str = f"${account['balance']:,.2f}" if account else "N/A"
-        active_profile = self.settings.active_mode.capitalize()
-        profile_emoji = {"Safe": "🟢", "Moderate": "🟡", "Aggressive": "🔴"}.get(active_profile, "⚪")
+        active_profile = self.settings.active_mode.upper()
+        mode_icons = {"SAFE": "🛡️", "MODERATE": "⚖️", "AGGRESSIVE": "⚡"}
+        profile_emoji = mode_icons.get(active_profile, "🎛️")
         
-        status_title = "STANDBY (Trading Off)" if self._trading_paused else "RUNNING"
-        trading_state_desc = "🟡 STANDBY — Tap [▶️ Start Trading] or send /startbot from your phone to start trading" if self._trading_paused else "🟢 ACTIVE & SCANNING"
+        if self._trading_paused:
+            status_title = "STANDBY (PC Online — Ready to Start)"
+            details = (
+                f"🔌 <b>PC Online & Connected to Internet</b>\n\n"
+                f"• <b>Account:</b> <code>{account['login'] if account else 'N/A'}</code> ({account.get('server', '') if account else ''})\n"
+                f"• <b>Balance:</b> <code>{balance_str}</code>\n"
+                f"• <b>Active Profile:</b> {profile_emoji} <code>{active_profile}</code>\n"
+                f"• <b>Trading Engine:</b> 🟡 STANDBY (Ready)\n\n"
+                f"<i>Tap <b>🚀 START TRADING BOT</b> below or send <code>/startbot</code> anytime from your phone to start live trading.</i>"
+            )
+        else:
+            status_title = f"RUNNING ({mode})"
+            details = (
+                f"🟢 <b>Automated Trading Engine Active & Scanning</b>\n\n"
+                f"• <b>Account:</b> <code>{account['login'] if account else 'N/A'}</code>\n"
+                f"• <b>Balance:</b> <code>{balance_str}</code>\n"
+                f"• <b>Active Profile:</b> {profile_emoji} <code>{active_profile}</code>\n"
+                f"• <b>Symbol:</b> <code>{self.settings.symbol}</code>"
+            )
         
-        await self.telegram.send_bot_status(
-            status_title,
-            f"Mode: {mode}\nBalance: {balance_str}\nSymbol: XAUUSD\nTrading Profile: {profile_emoji} {active_profile}\nState: {trading_state_desc}"
-        )
-
-        # Start interactive 2-way Telegram polling in background
-        await self.telegram.start_polling()
+        await self.telegram.send_bot_status(status_title, details)
 
         # Start background task scheduler (non-blocking news, economic calendar & daily report)
         self.scheduler.add_news_job(
