@@ -8,7 +8,7 @@ config/.env
 # Python
 __pycache__/
 *.py[cod]
-*$py.class
+*.class
 *.so
 *.egg-info/
 dist/
@@ -27,17 +27,18 @@ ai/models/*.joblib
 ai/models/*.keras
 !ai/models/.gitkeep
 
-# Database
-data/*.db
-data/*.db-journal
+# Database & Data files
+data/*
+!data/.gitkeep
 *.sqlite3
 
-# IDE
+# IDE & Tool Artifacts
 .vscode/
 .idea/
 *.swp
 *.swo
 *~
+.playwright-mcp/
 
 # OS
 Thumbs.db
@@ -47,9 +48,8 @@ Thumbs.db
 logs/
 *.log
 
-# Testing
+# Testing & Scratch
 .coverage
 htmlcov/
 .pytest_cache/
-data/*.db-shm
-data/*.db-wal
+scratch/
