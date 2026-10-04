@@ -190,9 +190,9 @@ class TelegramNotifier:
         """Create the primary interactive Command Center keyboard."""
         paused = getattr(self.bot_instance, "_trading_paused", False)
         pause_btn = (
-            InlineKeyboardButton("▶️ Resume Trading", callback_data="cb_resume")
+            InlineKeyboardButton("▶️ Start / Resume Trading", callback_data="cb_resume")
             if paused
-            else InlineKeyboardButton("⏸️ Pause Trading", callback_data="cb_pause")
+            else InlineKeyboardButton("⏸️ Pause / Standby Trading", callback_data="cb_pause")
         )
 
         curr_mode = self.settings.active_mode.upper()
@@ -276,14 +276,17 @@ class TelegramNotifier:
         mode_icons = {"SAFE": "🛡️", "MODERATE": "⚖️", "AGGRESSIVE": "⚡"}
         mode_icon = mode_icons.get(active_mode, "🎛️")
 
+        paused = getattr(self.bot_instance, "_trading_paused", False)
+        status_str = "🟡 STANDBY / PAUSED (Trading Off)" if paused else f"🟢 ACTIVE & RUNNING ({mode})"
+
         text = (
             f"⚡ <b>XAUUSD AI TRADING BOT — COMMAND CENTER</b> ⚡\n\n"
-            f"<b>Status:</b> 🟢 ONLINE ({mode})\n"
+            f"<b>Status:</b> {status_str}\n"
             f"<b>Active Mode:</b> {mode_icon} <code>{active_mode}</code>\n"
             f"<b>Symbol:</b> <code>{self.settings.symbol}</code>\n"
             f"<b>Lot Size:</b> <code>{self.settings.risk_params.get('default_lot_size', 0.02)}</code>\n"
             f"<b>Time:</b> {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')}\n\n"
-            f"Tap an action button below to monitor or control your bot:"
+            f"Tap an action button below to monitor or control your bot from your phone:"
         )
         await self._safe_edit_or_reply(
             update,
@@ -1551,8 +1554,8 @@ class TelegramNotifier:
             self._app.add_handler(CommandHandler("regime", self._handle_regime))
             self._app.add_handler(CommandHandler("learning", self._handle_learning))
             self._app.add_handler(CommandHandler("price", self._handle_price))
-            self._app.add_handler(CommandHandler("pause", self._handle_pause))
-            self._app.add_handler(CommandHandler("resume", self._handle_resume))
+            self._app.add_handler(CommandHandler(["pause", "stopbot", "stop_trading"], self._handle_pause))
+            self._app.add_handler(CommandHandler(["resume", "startbot", "start_trading"], self._handle_resume))
             self._app.add_handler(CommandHandler("closeall", self._handle_confirm_closeall))
             self._app.add_handler(CommandHandler("setlot", self._handle_set_lot))
             self._app.add_handler(CommandHandler("setrisk", self._handle_set_risk))
@@ -1583,6 +1586,8 @@ class TelegramNotifier:
                 from telegram import BotCommand
                 cmds = [
                     BotCommand("start", "Command Center & Main Menu"),
+                    BotCommand("startbot", "Start / Resume Automated Live Trading"),
+                    BotCommand("stopbot", "Pause / Standby Automated Trading"),
                     BotCommand("mode", "Switch Trading Profile (Safe / Moderate / Aggressive)"),
                     BotCommand("status", "Account Balance, Equity & Health"),
                     BotCommand("positions", "Open Positions & Floating P&L"),
@@ -1594,8 +1599,6 @@ class TelegramNotifier:
                     BotCommand("news", "Macro News & Gemini Sentiment"),
                     BotCommand("regime", "Market Regime & Active Strategies"),
                     BotCommand("learning", "Autonomous Self-Learning Metrics"),
-                    BotCommand("pause", "Pause Automatic Order Execution"),
-                    BotCommand("resume", "Resume Automatic Order Execution"),
                     BotCommand("setlot", "Set Default Lot Size (e.g. /setlot 0.02)"),
                     BotCommand("setrisk", "Set Risk % Per Trade (e.g. /setrisk 2.0)"),
                     BotCommand("closeall", "Emergency Close All Positions"),
@@ -1839,8 +1842,8 @@ class TelegramNotifier:
         app.add_handler(CommandHandler("regime", self._handle_regime))
         app.add_handler(CommandHandler("learning", self._handle_learning))
         app.add_handler(CommandHandler("price", self._handle_price))
-        app.add_handler(CommandHandler("pause", self._handle_pause))
-        app.add_handler(CommandHandler("resume", self._handle_resume))
+        app.add_handler(CommandHandler(["pause", "stopbot", "stop_trading"], self._handle_pause))
+        app.add_handler(CommandHandler(["resume", "startbot", "start_trading"], self._handle_resume))
         app.add_handler(CommandHandler("closeall", self._handle_confirm_closeall))
         app.add_handler(CommandHandler("setlot", self._handle_set_lot))
         app.add_handler(CommandHandler("setrisk", self._handle_set_risk))
@@ -1855,6 +1858,8 @@ class TelegramNotifier:
                 from telegram import BotCommand
                 cmds = [
                     BotCommand("start", "Command Center & Main Menu"),
+                    BotCommand("startbot", "Start / Resume Automated Live Trading"),
+                    BotCommand("stopbot", "Pause / Standby Automated Trading"),
                     BotCommand("mode", "Switch Trading Profile (Safe / Moderate / Aggressive)"),
                     BotCommand("status", "Account Balance, Equity & Health"),
                     BotCommand("positions", "Open Positions & Floating P&L"),
@@ -1866,8 +1871,6 @@ class TelegramNotifier:
                     BotCommand("news", "Macro News & Gemini Sentiment"),
                     BotCommand("regime", "Market Regime & Active Strategies"),
                     BotCommand("learning", "Autonomous Self-Learning Metrics"),
-                    BotCommand("pause", "Pause Automatic Order Execution"),
-                    BotCommand("resume", "Resume Automatic Order Execution"),
                     BotCommand("setlot", "Set Default Lot Size (e.g. /setlot 0.02)"),
                     BotCommand("setrisk", "Set Risk % Per Trade (e.g. /setrisk 2.0)"),
                     BotCommand("closeall", "Emergency Close All Positions"),
