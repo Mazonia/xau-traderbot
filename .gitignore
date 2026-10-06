@@ -19,6 +19,8 @@ eggs/
 venv/
 env/
 .venv/
+*.exe
+
 
 # AI Models (large files)
 ai/models/*.h5
