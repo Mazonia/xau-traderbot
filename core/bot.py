@@ -751,3 +751,16 @@ class TradingBot:
             logger.info("Daily performance report sent to Telegram")
         except Exception as e:
             logger.error(f"Daily summary task error: {e}")
+
+    async def _retrain_model_task(self):
+        """Periodically retrain AI model on latest historical MT5 market data."""
+        try:
+            logger.info("🤖 Periodic AI model retrain task triggered...")
+            from scripts.train_ai import run_training_pipeline
+            metrics = await asyncio.to_thread(run_training_pipeline, timeframe="M15", count=10000)
+            self.signal_classifier.load_model()
+            acc = metrics.get("accuracy", 0.0) if isinstance(metrics, dict) else 0.0
+            logger.success(f"✅ Periodic AI model retraining complete! Accuracy: {acc:.2%}")
+        except Exception as e:
+            logger.error(f"Error in periodic AI model retraining task: {e}")
+
