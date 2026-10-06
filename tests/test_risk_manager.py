@@ -9,9 +9,12 @@ from execution.risk_manager import RiskManager
 
 
 @pytest.fixture
-def mock_mt5():
+def mock_mt5(monkeypatch):
     """Create a mock MT5 connector."""
+    monkeypatch.setattr("database.crud.get_daily_pnl", lambda: 0.0)
     mock = MagicMock()
+
+
     mock.get_account_info.return_value = {
         "login": 12345678,
         "balance": 10_000.0,

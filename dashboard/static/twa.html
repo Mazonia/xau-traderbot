@@ -1,0 +1,409 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>XAUUSD Trader Bot Mini App</title>
+    <!-- Telegram WebApp JS -->
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-color: #0b0e14;
+            --card-bg: rgba(22, 28, 38, 0.75);
+            --border-color: rgba(255, 215, 0, 0.15);
+            --gold-accent: #f3ba2f;
+            --gold-gradient: linear-gradient(135deg, #f3ba2f 0%, #ff9900 100%);
+            --green: #00c853;
+            --red: #ff1744;
+            --text-main: #f0f4f8;
+            --text-sub: #8a99ad;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            -webkit-tap-highlight-color: transparent;
+        }
+
+        body {
+            background-color: var(--bg-color);
+            color: var(--text-main);
+            padding: 12px;
+            padding-bottom: 80px;
+            min-height: 100vh;
+        }
+
+        /* Header Card */
+        .app-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 14px 16px;
+            background: var(--card-bg);
+            border: 1px solid var(--border-color);
+            backdrop-filter: blur(12px);
+            border-radius: 16px;
+            margin-bottom: 12px;
+        }
+
+        .brand {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .brand-icon {
+            width: 38px;
+            height: 38px;
+            background: var(--gold-gradient);
+            border-radius: 10px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 800;
+            color: #000;
+            font-size: 18px;
+            box-shadow: 0 4px 15px rgba(243, 186, 47, 0.3);
+        }
+
+        .brand-title {
+            font-size: 16px;
+            font-weight: 700;
+            letter-spacing: 0.5px;
+        }
+
+        .status-badge {
+            padding: 4px 10px;
+            border-radius: 20px;
+            font-size: 11px;
+            font-weight: 600;
+            background: rgba(0, 200, 83, 0.15);
+            color: var(--green);
+            border: 1px solid rgba(0, 200, 83, 0.3);
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .status-dot {
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            background: var(--green);
+            box-shadow: 0 0 8px var(--green);
+        }
+
+        /* Account Metric Cards */
+        .metrics-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+            margin-bottom: 12px;
+        }
+
+        .card {
+            background: var(--card-bg);
+            border: 1px solid var(--border-color);
+            backdrop-filter: blur(12px);
+            border-radius: 14px;
+            padding: 14px;
+        }
+
+        .card-label {
+            font-size: 11px;
+            color: var(--text-sub);
+            text-transform: uppercase;
+            font-weight: 600;
+            margin-bottom: 4px;
+        }
+
+        .card-val {
+            font-size: 20px;
+            font-weight: 700;
+            font-family: 'JetBrains Mono', monospace;
+        }
+
+        .val-gold { color: var(--gold-accent); }
+        .val-green { color: var(--green); }
+        .val-red { color: var(--red); }
+
+        /* Section Header */
+        .section-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 8px;
+            padding: 0 4px;
+        }
+
+        .section-title {
+            font-size: 13px;
+            font-weight: 700;
+            color: var(--text-sub);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        /* Positions List */
+        .position-card {
+            background: var(--card-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            padding: 12px 14px;
+            margin-bottom: 8px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .pos-type {
+            font-size: 12px;
+            font-weight: 700;
+            padding: 3px 8px;
+            border-radius: 6px;
+            display: inline-block;
+            margin-bottom: 4px;
+        }
+
+        .type-buy { background: rgba(0, 200, 83, 0.2); color: var(--green); }
+        .type-sell { background: rgba(255, 23, 68, 0.2); color: var(--red); }
+
+        .pos-detail {
+            font-size: 11px;
+            color: var(--text-sub);
+        }
+
+        .btn-close {
+            background: rgba(255, 23, 68, 0.15);
+            color: var(--red);
+            border: 1px solid rgba(255, 23, 68, 0.3);
+            padding: 6px 12px;
+            border-radius: 8px;
+            font-size: 12px;
+            font-weight: 600;
+            cursor: pointer;
+        }
+
+        .btn-close:active {
+            transform: scale(0.95);
+        }
+
+        /* Emergency Action Button */
+        .btn-emergency {
+            width: 100%;
+            padding: 14px;
+            background: rgba(255, 23, 68, 0.2);
+            border: 1px solid rgba(255, 23, 68, 0.5);
+            border-radius: 12px;
+            color: var(--red);
+            font-weight: 700;
+            font-size: 14px;
+            cursor: pointer;
+            margin-top: 12px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .btn-emergency:active {
+            transform: scale(0.98);
+        }
+
+        /* Voice AI Floating Button */
+        .mic-fab {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            width: 56px;
+            height: 56px;
+            border-radius: 50%;
+            background: var(--gold-gradient);
+            color: #000;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 24px;
+            box-shadow: 0 6px 20px rgba(243, 186, 47, 0.5);
+            border: 2px solid #fff;
+            cursor: pointer;
+            z-index: 99;
+        }
+    </style>
+</head>
+<body>
+
+    <!-- Header Card -->
+    <div class="app-header">
+        <div class="brand">
+            <div class="brand-icon">⚡</div>
+            <div>
+                <div class="brand-title">XAUUSD AI Trader Bot</div>
+                <div style="font-size:10px; color:var(--text-sub)">Live MT5 Remote Command Center</div>
+            </div>
+        </div>
+        <div class="status-badge">
+            <div class="status-dot"></div>
+            <span id="bot-status-text">BOT ACTIVE</span>
+        </div>
+    </div>
+
+    <!-- Account Metrics -->
+    <div class="metrics-grid">
+        <div class="card">
+            <div class="card-label">Balance</div>
+            <div class="card-val val-gold" id="val-balance">$0.00</div>
+        </div>
+        <div class="card">
+            <div class="card-label">Equity</div>
+            <div class="card-val" id="val-equity">$0.00</div>
+        </div>
+        <div class="card">
+            <div class="card-label">Today's Net P&L</div>
+            <div class="card-val" id="val-pnl">$0.00</div>
+        </div>
+        <div class="card">
+            <div class="card-label">XAUUSD Price</div>
+            <div class="card-val val-gold" id="val-price">Loading...</div>
+        </div>
+    </div>
+
+    <!-- Positions Section -->
+    <div class="section-header">
+        <div class="section-title">Active XAUUSD Positions</div>
+    </div>
+    <div id="positions-container">
+        <div class="card" style="text-align:center; color:var(--text-sub); padding:20px;">
+            Loading active positions...
+        </div>
+    </div>
+
+    <!-- Emergency Kill Switch Button -->
+    <button class="btn-emergency" onclick="emergencyCloseAll()">🛑 Emergency Close All Positions</button>
+
+    <!-- Floating Voice AI Trigger -->
+    <div class="mic-fab" onclick="triggerVoiceCommand()" title="Voice Command">
+        🎙️
+    </div>
+
+    <script>
+        const tg = window.Telegram?.WebApp;
+        if (tg) {
+            tg.ready();
+            tg.expand();
+        }
+
+        async function fetchMetrics() {
+            try {
+                const res = await fetch('/api/account');
+                const data = await res.json();
+                if (data.connected) {
+                    document.getElementById('val-balance').innerText = `$${(data.balance || 0).toLocaleString('en-US', {minimumFractionDigits:2})}`;
+                    document.getElementById('val-equity').innerText = `$${(data.equity || 0).toLocaleString('en-US', {minimumFractionDigits:2})}`;
+                    
+                    const pnl = data.net_pnl_today || 0;
+                    const pnlEl = document.getElementById('val-pnl');
+                    pnlEl.innerText = `${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)}`;
+                    pnlEl.className = `card-val ${pnl >= 0 ? 'val-green' : 'val-red'}`;
+                }
+
+                const posRes = await fetch('/api/positions');
+                const positions = await posRes.json();
+                renderPositions(positions);
+
+                const priceRes = await fetch('/api/price');
+                if (priceRes.ok) {
+                    const priceData = await priceRes.json();
+                    document.getElementById('val-price').innerText = `$${priceData.bid?.toFixed(2) || '---'}`;
+                }
+            } catch (e) {
+                console.error("Fetch metrics error:", e);
+            }
+        }
+
+        function renderPositions(positions) {
+            const container = document.getElementById('positions-container');
+            if (!Array.isArray(positions) || positions.length === 0) {
+                container.innerHTML = `<div class="card" style="text-align:center; color:var(--text-sub); padding:20px;">No Active Open Positions</div>`;
+                return;
+            }
+
+            container.innerHTML = positions.map(p => `
+                <div class="position-card">
+                    <div>
+                        <span class="pos-type ${p.type === 'BUY' ? 'type-buy' : 'type-sell'}">${p.type} ${p.volume} Lots</span>
+                        <div style="font-weight:700; font-size:14px;">${p.symbol} @ $${p.open_price?.toFixed(2)}</div>
+                        <div class="pos-detail">SL: $${p.sl?.toFixed(2) || 'None'} | TP: $${p.tp?.toFixed(2) || 'None'}</div>
+                    </div>
+                    <div style="text-align:right;">
+                        <div style="font-weight:700; font-size:15px; margin-bottom:4px;" class="${p.profit >= 0 ? 'val-green' : 'val-red'}">
+                            ${p.profit >= 0 ? '+' : ''}$${p.profit?.toFixed(2)}
+                        </div>
+                        <button class="btn-close" onclick="closePosition(${p.ticket})">Close</button>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        async function closePosition(ticket) {
+            if (tg?.HapticFeedback) tg.HapticFeedback.notificationOccurred('warning');
+            try {
+                const res = await fetch(`/api/close_position?ticket=${ticket}`, { method: 'POST' });
+                const data = await res.json();
+                if (data.status === "SUCCESS") {
+                    if (tg?.HapticFeedback) tg.HapticFeedback.notificationOccurred('success');
+                    fetchMetrics();
+                } else {
+                    alert("Close position failed: " + (data.message || data.error));
+                }
+            } catch (e) {
+                alert("Error closing position: " + e.message);
+            }
+        }
+
+        async function emergencyCloseAll() {
+            if (!confirm("Are you sure you want to CLOSE ALL open positions immediately?")) return;
+            if (tg?.HapticFeedback) tg.HapticFeedback.notificationOccurred('error');
+            try {
+                const res = await fetch('/api/twa/voice_command', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ command: "close all positions" })
+                });
+                const data = await res.json();
+                alert(data.result || "Closed all positions");
+                fetchMetrics();
+            } catch (e) {
+                alert("Error: " + e.message);
+            }
+        }
+
+        function triggerVoiceCommand() {
+            if (tg?.HapticFeedback) tg.HapticFeedback.impactOccurred('medium');
+            if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
+                alert("Voice command: Send a voice note in Telegram chat!");
+                return;
+            }
+            const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+            const recognition = new SpeechRecognition();
+            recognition.onstart = () => alert("🎙️ Listening for XAUUSD Bot command... (e.g. 'Status', 'Close all')");
+            recognition.onresult = async (event) => {
+                const transcript = event.results[0][0].transcript;
+                alert(`Voice Command: "${transcript}"`);
+                await fetch(`/api/twa/voice_command`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ command: transcript })
+                });
+                fetchMetrics();
+            };
+            recognition.start();
+        }
+
+        setInterval(fetchMetrics, 3000);
+        fetchMetrics();
+    </script>
+</body>
+</html>

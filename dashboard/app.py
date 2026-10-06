@@ -54,6 +54,70 @@ async def index():
     return FileResponse(str(STATIC_DIR / "index.html"))
 
 
+@app.get("/twa")
+async def twa_index():
+    """Serve the Telegram Mini App HTML."""
+    return FileResponse(str(STATIC_DIR / "twa.html"))
+
+
+@app.get("/api/price")
+async def get_price():
+    """Get live XAUUSD Bid, Ask, and Spread ticker."""
+    try:
+        from core.mt5_connector import get_mt5_connector
+        mt5 = get_mt5_connector()
+        if mt5.connect(max_retries=1, retry_delay=0.1):
+            tick = mt5.get_symbol_ticker("XAUUSD")
+            if tick:
+                return JSONResponse({
+                    "symbol": "XAUUSD",
+                    "bid": tick.get("bid"),
+                    "ask": tick.get("ask"),
+                    "spread_pips": tick.get("spread_pips"),
+                    "time": tick.get("time").isoformat() if hasattr(tick.get("time"), "isoformat") else None
+                })
+        return JSONResponse({"error": "Price feed unavailable"}, status_code=503)
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+@app.post("/api/close_position")
+async def close_position(ticket: int):
+    """Close a specific position remotely via ticket."""
+    try:
+        from core.mt5_connector import get_mt5_connector
+        mt5 = get_mt5_connector()
+        if mt5.connect(max_retries=1, retry_delay=0.1):
+            res = mt5.close_position(ticket=ticket)
+            if res:
+                return JSONResponse({"status": "SUCCESS", "message": f"Closed position #{ticket}"})
+        return JSONResponse({"status": "ERROR", "message": f"Failed to close position #{ticket}"}, status_code=400)
+    except Exception as e:
+        return JSONResponse({"status": "ERROR", "error": str(e)}, status_code=500)
+
+
+
+
+
+class VoiceCommandRequest(BaseModel):
+    command: str
+
+
+@app.post("/api/twa/voice_command")
+async def process_voice_command(req: VoiceCommandRequest):
+    """Process voice text command."""
+    cmd = req.command.lower()
+    logger.info(f"TWA Spoken Voice Command: '{cmd}'")
+    if "close" in cmd and "all" in cmd:
+        from core.mt5_connector import get_mt5_connector
+        mt5 = get_mt5_connector()
+        if mt5.connect():
+            count = mt5.close_all_positions()
+            return JSONResponse({"status": "SUCCESS", "result": f"Executed emergency close all ({count} trades closed)"})
+    return JSONResponse({"status": "SUCCESS", "result": f"Processed command: '{req.command}'"})
+
+
+
 @app.get("/api/account")
 async def get_account():
     """Get current account info (fast non-blocking with credential masking and today's P&L)."""
