@@ -1655,10 +1655,10 @@ class TelegramNotifier:
         from telegram.request import HTTPXRequest
         return HTTPXRequest(
             connection_pool_size=16,
-            connect_timeout=20.0,
-            read_timeout=20.0,
-            write_timeout=20.0,
-            pool_timeout=5.0,
+            connect_timeout=30.0,
+            read_timeout=30.0,
+            write_timeout=30.0,
+            pool_timeout=10.0,
         )
 
     # ── Background Polling Lifecycle ──────────────────────────────────────
@@ -1710,8 +1710,6 @@ class TelegramNotifier:
                 # Register callback button router
                 self._app.add_handler(CallbackQueryHandler(self._callback_router))
 
-
-
                 # Register error handler for network/conflict issues
                 async def _on_telegram_error(update: object, context: ContextTypes.DEFAULT_TYPE):
                     err = context.error
@@ -1721,6 +1719,8 @@ class TelegramNotifier:
                             "⚠️ Telegram Conflict: Another bot instance is currently active on Telegram. "
                             "Trading alerts will still be sent, but interactive chat commands are handled by the other instance."
                         )
+                    elif "ConnectError" in err_msg or "TimedOut" in type(err).__name__ or "NetworkError" in type(err).__name__:
+                        logger.debug(f"Telegram connection hiccup (auto-reconnecting): {err}")
                     else:
                         logger.error(f"Telegram error: {err}")
 
@@ -1759,7 +1759,7 @@ class TelegramNotifier:
                 except Exception as e:
                     logger.warning(f"Could not register Telegram menu commands: {e}")
 
-                await self._app.updater.start_polling(drop_pending_updates=True)
+                await self._app.updater.start_polling(poll_interval=0.0, timeout=15, bootstrap_retries=-1, drop_pending_updates=True)
                 self._is_polling = True
                 logger.info("⚡ Telegram Interactive Bot polling started successfully")
                 return
