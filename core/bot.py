@@ -142,9 +142,26 @@ class TradingBot:
         # Initialize database
         init_database()
 
-        # Connect to MT5
-        if not self.mt5.connect():
-            logger.critical("Failed to connect to MT5 — aborting")
+        # Start interactive 2-way Telegram polling immediately so bot is responsive
+        await self.telegram.start_polling()
+
+        # Connect to MT5 terminal
+        mt5_connected = self.mt5.connect()
+        if not mt5_connected:
+            logger.error("Initial MT5 connection failed — waiting and retrying in background")
+            await self.telegram.send_bot_status(
+                "CONNECTING",
+                "⚠️ MetaTrader 5 terminal is offline or loading. The bot is actively attempting connection in the background..."
+            )
+            # Try a second round with retries
+            mt5_connected = self.mt5.connect(max_retries=10, retry_delay=3)
+
+        if not mt5_connected:
+            logger.critical("Failed to connect to MT5 after extended retries")
+            await self.telegram.send_bot_status(
+                "STOPPED",
+                "❌ Could not connect to MetaTrader 5. Please ensure MT5 terminal is installed and valid credentials are in config/.env."
+            )
             return
 
         # Load AI models
@@ -164,9 +181,6 @@ class TradingBot:
         if self.settings.demo_mode:
             logger.warning("⚠️ DEMO MODE — Trades will execute on demo account")
 
-        # Start interactive 2-way Telegram polling in background (with network auto-retry)
-        await self.telegram.start_polling()
-
         # Send startup notification via Telegram
         mode = "DEMO" if self.settings.demo_mode else "LIVE"
         balance_str = f"${account['balance']:,.2f}" if account else "N/A"
@@ -174,6 +188,8 @@ class TradingBot:
         mode_icons = {"SAFE": "🛡️", "MODERATE": "⚖️", "AGGRESSIVE": "⚡"}
         profile_emoji = mode_icons.get(active_profile, "🎛️")
         
+        mt5_privacy_str = "🙈 Hidden in Background" if getattr(self.settings.mt5, "hide_terminal", True) else "👁️ Visible on Desktop"
+
         if self._trading_paused:
             status_title = "STANDBY (PC Online — Ready to Start)"
             details = (
@@ -181,6 +197,7 @@ class TradingBot:
                 f"• <b>Account:</b> <code>{account['login'] if account else 'N/A'}</code> ({account.get('server', '') if account else ''})\n"
                 f"• <b>Balance:</b> <code>{balance_str}</code>\n"
                 f"• <b>Active Profile:</b> {profile_emoji} <code>{active_profile}</code>\n"
+                f"• <b>MT5 Terminal:</b> {mt5_privacy_str}\n"
                 f"• <b>Trading Engine:</b> 🟡 STANDBY (Ready)\n\n"
                 f"<i>Tap <b>🚀 START TRADING BOT</b> below or send <code>/startbot</code> anytime from your phone to start live trading.</i>"
             )
@@ -191,9 +208,10 @@ class TradingBot:
                 f"• <b>Account:</b> <code>{account['login'] if account else 'N/A'}</code>\n"
                 f"• <b>Balance:</b> <code>{balance_str}</code>\n"
                 f"• <b>Active Profile:</b> {profile_emoji} <code>{active_profile}</code>\n"
+                f"• <b>MT5 Terminal:</b> {mt5_privacy_str}\n"
                 f"• <b>Symbol:</b> <code>{self.settings.symbol}</code>"
             )
-        
+
         await self.telegram.send_bot_status(status_title, details)
 
         # Start background task scheduler (non-blocking news, economic calendar & daily report)

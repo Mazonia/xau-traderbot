@@ -55,6 +55,7 @@ class MT5Settings(BaseSettings):
         alias="MT5_PATH",
     )
     timeout: int = 60_000  # Connection timeout in ms
+    hide_terminal: bool = Field(default=True, alias="MT5_HIDE_TERMINAL")
 
     @field_validator("login", mode="before")
     @classmethod
@@ -94,6 +95,7 @@ class TelegramSettings(BaseSettings):
 
     bot_token: str = Field(default="", alias="TELEGRAM_BOT_TOKEN")
     chat_id: str = Field(default="", alias="TELEGRAM_CHAT_ID")
+    webapp_url: str = Field(default="", alias="TELEGRAM_WEBAPP_URL")
 
     model_config = _COMMON_CONFIG
 

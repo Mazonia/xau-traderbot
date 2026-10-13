@@ -173,20 +173,29 @@ class TelegramNotifier:
                     reply_markup=reply_markup,
                     parse_mode=parse_mode,
                 )
+                return
             except Exception as e:
-                # If HTML parsing failed on reply, retry stripped plain text
-                if "parse entities" in str(e).lower() and parse_mode:
-                    try:
-                        import re
-                        plain = re.sub(r"<[^>]+>", "", text)
-                        await update.effective_message.reply_text(
-                            text=plain,
-                            reply_markup=reply_markup,
-                        )
-                        return
-                    except Exception:
-                        pass
-                logger.error(f"Failed to send reply message: {e}")
+                err_str = str(e)
+                logger.warning(f"Initial reply failed ({err_str}), attempting fallback...")
+                # Try fallback 1: plain text with markup
+                try:
+                    import re
+                    plain = re.sub(r"<[^>]+>", "", text)
+                    await update.effective_message.reply_text(
+                        text=plain,
+                        reply_markup=reply_markup,
+                    )
+                    return
+                except Exception:
+                    pass
+                # Try fallback 2: plain text without markup (guarantees delivery)
+                try:
+                    import re
+                    plain = re.sub(r"<[^>]+>", "", text)
+                    await update.effective_message.reply_text(text=plain)
+                    return
+                except Exception as e3:
+                    logger.error(f"Failed to send reply message even in fallback: {e3}")
 
     # ── Interactive Keyboards ─────────────────────────────────────────────
 
@@ -203,11 +212,29 @@ class TelegramNotifier:
         icon = mode_icons.get(curr_mode, "🎛️")
         mode_btn = InlineKeyboardButton(f"{icon} Profile Mode: {curr_mode} ⚙️", callback_data="cb_mode_menu")
 
-        twa_url = f"http://127.0.0.1:8080/twa"
-        keyboard = [
-            [
-                InlineKeyboardButton("🌐 LAUNCH TELEGRAM MINI APP (TWA)", web_app=WebAppInfo(url=twa_url)),
-            ],
+        # MT5 visibility toggle button
+        mt5_vis = False
+        try:
+            mt5_obj = self._get_mt5()
+            if hasattr(mt5_obj, "is_terminal_visible"):
+                mt5_vis = mt5_obj.is_terminal_visible()
+        except Exception:
+            pass
+        mt5_btn = InlineKeyboardButton(
+            "🙈 Hide MT5 Terminal" if mt5_vis else "👁️ Show MT5 Terminal",
+            callback_data="cb_toggle_mt5"
+        )
+
+        keyboard = []
+
+        # Optional Mini App button ONLY if a valid https URL is configured (Telegram strictly requires HTTPS)
+        custom_twa = getattr(self.settings.telegram, "webapp_url", "").strip()
+        if custom_twa and custom_twa.startswith("https://"):
+            keyboard.append([
+                InlineKeyboardButton("🌐 LAUNCH TELEGRAM MINI APP (TWA)", web_app=WebAppInfo(url=custom_twa)),
+            ])
+
+        keyboard.extend([
             [
                 main_action_btn,
             ],
@@ -227,13 +254,13 @@ class TelegramNotifier:
                 InlineKeyboardButton("🏷️ Gold Price & Spread", callback_data="cb_price"),
                 InlineKeyboardButton("🎓 Self-Learning", callback_data="cb_learning"),
             ],
-
             [
                 InlineKeyboardButton("🎯 Live Signal", callback_data="cb_signal"),
                 InlineKeyboardButton("⚙️ Risk Settings", callback_data="cb_risk_menu"),
             ],
             [
                 mode_btn,
+                mt5_btn,
             ],
             [
                 InlineKeyboardButton("🛑 EMERGENCY CLOSE ALL", callback_data="cb_confirm_closeall"),
@@ -242,7 +269,7 @@ class TelegramNotifier:
             [
                 InlineKeyboardButton("📖 Help & Commands", callback_data="cb_help"),
             ],
-        ]
+        ])
 
         return InlineKeyboardMarkup(keyboard)
 
@@ -263,23 +290,22 @@ class TelegramNotifier:
         """Handle /start or /menu command."""
         if not self.authorized_ids:
             sender_id = update.effective_chat.id if update.effective_chat else (update.effective_user.id if update.effective_user else "unknown")
-            if update.effective_message:
-                await update.effective_message.reply_text(
-                    f"⚠️ <b>TELEGRAM BOT SETUP REQUIRED</b>\n\n"
-                    f"Your Telegram ID is: <code>{sender_id}</code>\n\n"
-                    f"To authorize this account, add this to your <code>config/.env</code> file:\n"
-                    f"<code>TELEGRAM_CHAT_ID={sender_id}</code>\n\n"
-                    f"Then restart the bot to activate remote control.",
-                    parse_mode="HTML"
-                )
+            msg = (
+                f"⚠️ <b>TELEGRAM BOT SETUP REQUIRED</b>\n\n"
+                f"Your Telegram ID is: <code>{sender_id}</code>\n\n"
+                f"To authorize this account, add this to your <code>config/.env</code> file:\n"
+                f"<code>TELEGRAM_CHAT_ID={sender_id}</code>\n\n"
+                f"Then restart the bot to activate remote control."
+            )
+            await self._safe_edit_or_reply(update, text=msg, parse_mode="HTML")
             return
 
         if not self._is_authorized(update):
-            if update.effective_message:
-                await update.effective_message.reply_text(
-                    "⛔ <b>Access Denied</b>\nThis bot is private and restricted to authorized operators.",
-                    parse_mode="HTML"
-                )
+            await self._safe_edit_or_reply(
+                update,
+                text="⛔ <b>Access Denied</b>\nThis bot is private and restricted to authorized operators.",
+                parse_mode="HTML"
+            )
             return
 
         mode = "DEMO" if self.settings.demo_mode else "LIVE"
@@ -290,15 +316,25 @@ class TelegramNotifier:
         paused = getattr(self.bot_instance, "_trading_paused", False)
         status_str = "🟡 STANDBY (Trading Off — Ready to Start)" if paused else f"🟢 LIVE TRADING ACTIVE ({mode})"
 
+        mt5_vis = False
+        try:
+            mt5_obj = self._get_mt5()
+            if hasattr(mt5_obj, "is_terminal_visible"):
+                mt5_vis = mt5_obj.is_terminal_visible()
+        except Exception:
+            pass
+        mt5_label = "👁️ Visible on Desktop" if mt5_vis else "🙈 Hidden in Background"
+
         text = (
             f"⚡ <b>XAUUSD AI TRADING BOT — COMMAND CENTER</b> ⚡\n\n"
             f"<b>PC Service:</b> 🔌 Online & Connected\n"
             f"<b>Trading Engine:</b> {status_str}\n"
+            f"<b>MT5 Terminal:</b> {mt5_label}\n"
             f"<b>Active Mode:</b> {mode_icon} <code>{active_mode}</code>\n"
             f"<b>Symbol:</b> <code>{self.settings.symbol}</code>\n"
             f"<b>Lot Size:</b> <code>{self.settings.risk_params.get('default_lot_size', 0.02)}</code>\n"
             f"<b>Time:</b> {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')}\n\n"
-            f"<i>Tap below to start or stop the trading engine remotely from your phone:</i>"
+            f"<i>Tap below to control trading or toggle MT5 terminal visibility:</i>"
         )
         await self._safe_edit_or_reply(
             update,
@@ -328,12 +364,17 @@ class TelegramNotifier:
         mode_str = "DEMO" if self.settings.demo_mode else "LIVE"
 
         if account:
-            balance_str = f"${account.get('balance', 0.0):,.2f}"
-            equity_str = f"${account.get('equity', 0.0):,.2f}"
-            profit_str = f"${account.get('profit', 0.0):+,.2f}"
-            margin_level = account.get("margin_level", 0.0)
+            bal = float(account.get('balance') or 0.0) if account.get('balance') is not None else 0.0
+            eq = float(account.get('equity') or 0.0) if account.get('equity') is not None else 0.0
+            prof = float(account.get('profit') or 0.0) if account.get('profit') is not None else 0.0
+            margin_level = float(account.get("margin_level") or 0.0) if account.get("margin_level") is not None else 0.0
+            free_margin = float(account.get('free_margin') or 0.0) if account.get('free_margin') is not None else 0.0
+
+            balance_str = f"${bal:,.2f}"
+            equity_str = f"${eq:,.2f}"
+            profit_str = f"${prof:+,.2f}"
             margin_level_str = f"{margin_level:.1f}%" if margin_level else "N/A"
-            free_margin_str = f"${account.get('free_margin', 0.0):,.2f}"
+            free_margin_str = f"${free_margin:,.2f}"
         else:
             balance_str = equity_str = profit_str = margin_level_str = free_margin_str = "Unavailable (MT5 Offline)"
 
@@ -1457,13 +1498,59 @@ class TelegramNotifier:
             f"• <code>/resume</code> — Resume automated trading\n"
             f"• <code>/closeall</code> — Flatten all open positions immediately\n"
             f"• <code>/setlot 0.02</code> — Set default lot size\n"
-            f"• <code>/setrisk 2.5</code> — Set max risk percent"
+            f"• <code>/setrisk 2.5</code> — Set max risk percent\n\n"
+            f"<b>Terminal Privacy Controls:</b>\n"
+            f"• <code>/hide_mt5</code> — Hide MT5 window (run silently in background)\n"
+            f"• <code>/show_mt5</code> — Show MT5 window on PC desktop\n"
+            f"• <code>/toggle_mt5</code> — Toggle MT5 visibility"
         )
         keyboard = InlineKeyboardMarkup([
             [InlineKeyboardButton("🎛️ Switch Mode", callback_data="cb_mode_menu")],
             [InlineKeyboardButton("🔙 Main Menu", callback_data="cb_menu")],
         ])
         await self._safe_edit_or_reply(update, text=msg, reply_markup=keyboard, parse_mode="HTML")
+
+    async def _handle_toggle_mt5(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Toggle MT5 terminal window visibility."""
+        if not self._is_authorized(update):
+            return
+        mt5_obj = self._get_mt5()
+        if hasattr(mt5_obj, "toggle_terminal_visibility"):
+            now_visible = mt5_obj.toggle_terminal_visibility()
+            status_text = "👁️ <b>MT5 Terminal is now VISIBLE on PC desktop.</b>" if now_visible else "🙈 <b>MT5 Terminal is now HIDDEN in the background.</b>\nNobody looking at your PC will see your charts or trades."
+        else:
+            status_text = "⚠️ MT5 terminal window control is unavailable."
+
+        await self._safe_edit_or_reply(
+            update,
+            text=f"{status_text}\n\n<i>You can toggle MT5 visibility anytime to keep your trading private.</i>",
+            reply_markup=self._get_main_keyboard(),
+            parse_mode="HTML"
+        )
+
+    async def _handle_show_mt5(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Show MT5 terminal window on PC desktop."""
+        if not self._is_authorized(update):
+            return
+        mt5_obj = self._get_mt5()
+        if hasattr(mt5_obj, "show_terminal"):
+            mt5_obj.show_terminal()
+            msg = "👁️ <b>MT5 Terminal is now VISIBLE on your PC desktop.</b>"
+        else:
+            msg = "⚠️ MT5 terminal window control is unavailable."
+        await self._safe_edit_or_reply(update, text=msg, reply_markup=self._get_main_keyboard(), parse_mode="HTML")
+
+    async def _handle_hide_mt5(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Hide MT5 terminal window in the background."""
+        if not self._is_authorized(update):
+            return
+        mt5_obj = self._get_mt5()
+        if hasattr(mt5_obj, "hide_terminal"):
+            mt5_obj.hide_terminal()
+            msg = "🙈 <b>MT5 Terminal is now HIDDEN in the background.</b>\nNobody looking at your PC will see your charts or trades."
+        else:
+            msg = "⚠️ MT5 terminal window control is unavailable."
+        await self._safe_edit_or_reply(update, text=msg, reply_markup=self._get_main_keyboard(), parse_mode="HTML")
 
     async def _callback_router(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Route callback queries from inline buttons with gatekeeper authorization check."""
@@ -1547,6 +1634,12 @@ class TelegramNotifier:
                 await self._handle_cancel_single(update, ticket)
             elif data == "cb_webapp":
                 await self._handle_webapp(update, context)
+            elif data == "cb_toggle_mt5":
+                await self._handle_toggle_mt5(update, context)
+            elif data == "cb_show_mt5":
+                await self._handle_show_mt5(update, context)
+            elif data == "cb_hide_mt5":
+                await self._handle_hide_mt5(update, context)
 
 
         except Exception as e:
@@ -1556,6 +1649,17 @@ class TelegramNotifier:
                     await query.message.reply_text(f"⚠️ Operation error: {e}")
             except Exception:
                 pass
+
+    def _get_request(self):
+        """Construct standard HTTPXRequest with robust network timeouts."""
+        from telegram.request import HTTPXRequest
+        return HTTPXRequest(
+            connection_pool_size=16,
+            connect_timeout=20.0,
+            read_timeout=20.0,
+            write_timeout=20.0,
+            pool_timeout=5.0,
+        )
 
     # ── Background Polling Lifecycle ──────────────────────────────────────
 
@@ -1567,7 +1671,13 @@ class TelegramNotifier:
         max_startup_retries = 30
         for attempt in range(1, max_startup_retries + 1):
             try:
-                self._app = ApplicationBuilder().token(self.bot_token).build()
+                self._app = (
+                    ApplicationBuilder()
+                    .token(self.bot_token)
+                    .request(self._get_request())
+                    .get_updates_request(self._get_request())
+                    .build()
+                )
 
                 # Register command handlers
                 self._app.add_handler(CommandHandler(["start", "menu"], self._handle_start))
@@ -1588,6 +1698,9 @@ class TelegramNotifier:
                 self._app.add_handler(CommandHandler("setlot", self._handle_set_lot))
                 self._app.add_handler(CommandHandler("setrisk", self._handle_set_risk))
                 self._app.add_handler(CommandHandler("help", self._handle_help))
+                self._app.add_handler(CommandHandler(["show_mt5", "showmt5"], self._handle_show_mt5))
+                self._app.add_handler(CommandHandler(["hide_mt5", "hidemt5"], self._handle_hide_mt5))
+                self._app.add_handler(CommandHandler(["toggle_mt5", "mt5"], self._handle_toggle_mt5))
 
                 # Register Telegram Super-Bot Feature Handlers
                 self._app.add_handler(CommandHandler(["webapp", "twa", "miniapp"], self._handle_webapp))
@@ -1634,6 +1747,8 @@ class TelegramNotifier:
                         BotCommand("regime", "🧠 Market Regime & Active Strategies"),
                         BotCommand("learning", "🎓 Autonomous Self-Learning Metrics"),
                         BotCommand("risk", "⚙️ Interactive Risk & Lot Settings"),
+                        BotCommand("hide_mt5", "🙈 Hide MT5 Terminal (Run in Background)"),
+                        BotCommand("show_mt5", "👁️ Show MT5 Terminal on Desktop"),
                         BotCommand("setlot", "Set Default Lot Size (e.g. /setlot 0.02)"),
                         BotCommand("setrisk", "Set Risk % Per Trade (e.g. /setrisk 2.0)"),
                         BotCommand("closeall", "🛑 Emergency Close All Positions"),
@@ -1680,7 +1795,7 @@ class TelegramNotifier:
                 bot = self._app.bot
             else:
                 from telegram import Bot
-                bot = Bot(token=self.bot_token)
+                bot = Bot(token=self.bot_token, request=self._get_request())
 
             await bot.send_message(
                 chat_id=self.chat_id,
@@ -1699,7 +1814,7 @@ class TelegramNotifier:
                         bot = self._app.bot
                     else:
                         from telegram import Bot
-                        bot = Bot(token=self.bot_token)
+                        bot = Bot(token=self.bot_token, request=self._get_request())
                     await bot.send_message(
                         chat_id=self.chat_id,
                         text=plain,
@@ -1864,7 +1979,7 @@ class TelegramNotifier:
             logger.error("Telegram bot is not enabled. Check TELEGRAM_BOT_TOKEN.")
             return
 
-        app = ApplicationBuilder().token(self.bot_token).build()
+        app = ApplicationBuilder().token(self.bot_token).request(self._get_request()).build()
         self._app = app
 
         # Register command handlers
@@ -1886,6 +2001,9 @@ class TelegramNotifier:
         app.add_handler(CommandHandler("setlot", self._handle_set_lot))
         app.add_handler(CommandHandler("setrisk", self._handle_set_risk))
         app.add_handler(CommandHandler("help", self._handle_help))
+        app.add_handler(CommandHandler(["show_mt5", "showmt5"], self._handle_show_mt5))
+        app.add_handler(CommandHandler(["hide_mt5", "hidemt5"], self._handle_hide_mt5))
+        app.add_handler(CommandHandler(["toggle_mt5", "mt5"], self._handle_toggle_mt5))
 
         # Register Telegram Super-Bot Feature Handlers
         app.add_handler(CommandHandler(["webapp", "twa", "miniapp"], self._handle_webapp))
@@ -1916,6 +2034,8 @@ class TelegramNotifier:
                     BotCommand("learning", "Autonomous Self-Learning Metrics"),
                     BotCommand("setlot", "Set Default Lot Size (e.g. /setlot 0.02)"),
                     BotCommand("setrisk", "Set Risk % Per Trade (e.g. /setrisk 2.0)"),
+                    BotCommand("hide_mt5", "🙈 Hide MT5 Terminal (Run in Background)"),
+                    BotCommand("show_mt5", "👁️ Show MT5 Terminal on Desktop"),
                     BotCommand("closeall", "Emergency Close All Positions"),
                     BotCommand("help", "Command Cheatsheet & Documentation"),
                 ]
@@ -1942,18 +2062,31 @@ class TelegramNotifier:
     # ── Super-Bot Feature Handlers (Vision AI & Voice Commands) ──
 
     async def _handle_webapp(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Send Telegram Web App popup button."""
-        url = "http://127.0.0.1:8080/twa"
-        keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton("🌐 Launch Telegram Mini App (TWA)", web_app=WebAppInfo(url=url))]
-        ])
-        if update.effective_message:
-            await update.effective_message.reply_text(
+        """Send Telegram Web App popup button or dashboard info."""
+        custom_url = getattr(self.settings.telegram, "webapp_url", "").strip()
+        if custom_url and custom_url.startswith("https://"):
+            keyboard = InlineKeyboardMarkup([
+                [InlineKeyboardButton("🌐 Launch Telegram Mini App (TWA)", web_app=WebAppInfo(url=custom_url))]
+            ])
+            text = (
                 "📱 <b>XAUUSD TRADER BOT MINI APP</b>\n\n"
-                "Tap the button below to open your real-time glassmorphism control panel:",
-                reply_markup=keyboard,
-                parse_mode="HTML"
+                "Tap the button below to open your real-time glassmorphism control panel:"
             )
+            await self._safe_edit_or_reply(update, text=text, reply_markup=keyboard, parse_mode="HTML")
+        else:
+            host = getattr(self.settings.dashboard, "host", "127.0.0.1")
+            port = getattr(self.settings.dashboard, "port", 8080)
+            text = (
+                "📱 <b>WEB DASHBOARD & MINI APP</b>\n"
+                f"{'━' * 28}\n\n"
+                f"• <b>Local PC Dashboard:</b> <code>http://{host}:{port}</code>\n"
+                f"• <b>TWA Mini App:</b> <code>http://{host}:{port}/twa</code>\n\n"
+                "💡 <i>Tip: Telegram Mini Apps strictly require an HTTPS URL (e.g. Cloudflare Tunnel or ngrok) to open inside Telegram. Set <code>TELEGRAM_WEBAPP_URL=https://...</code> in config/.env to enable direct in-app launching.</i>"
+            )
+            keyboard = InlineKeyboardMarkup([
+                [InlineKeyboardButton("🔙 Back to Main Menu", callback_data="cb_menu")]
+            ])
+            await self._safe_edit_or_reply(update, text=text, reply_markup=keyboard, parse_mode="HTML")
 
     async def _handle_photo_chart_analysis(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Analyze uploaded candlestick chart screenshot via AI Vision."""

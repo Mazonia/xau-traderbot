@@ -1,4 +1,5 @@
 Set WshShell = CreateObject("WScript.Shell")
-WshShell.CurrentDirectory = "c:\Users\Mazonia\Desktop\XAUUSD-AI-Trading-Bot"
-WshShell.Run "cmd.exe /c run_bot.bat", 0, False
-
+Set fso = CreateObject("Scripting.FileSystemObject")
+scriptDir = fso.GetParentFolderName(WScript.ScriptFullName)
+WshShell.CurrentDirectory = scriptDir
+WshShell.Run "cmd.exe /c run.bat", 0, False

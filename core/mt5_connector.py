@@ -125,6 +125,9 @@ class MT5Connector:
                     else:
                         logger.success("Connected to MT5 (account info unavailable)")
 
+                if getattr(self.settings.mt5, "hide_terminal", True):
+                    self.hide_terminal()
+
                 return True
 
             except Exception as e:
@@ -161,6 +164,97 @@ class MT5Connector:
             logger.warning("MT5 connection lost — attempting reconnect...")
             return self.connect(max_retries=max_retries, retry_delay=retry_delay)
         return True
+
+    # ── Terminal Window Visibility Management ────────────────────────────
+
+    def get_terminal_hwnd(self) -> Optional[int]:
+        """Find the MetaTrader 5 main window handle across desktops."""
+        try:
+            import ctypes
+            from ctypes import wintypes
+
+            user32 = ctypes.windll.user32
+
+            # Ensure current thread has access to WinSta0 and Default desktop
+            try:
+                hwinsta = user32.OpenWindowStationW("WinSta0", False, 0x00000004 | 0x0000037F)
+                if hwinsta:
+                    user32.SetProcessWindowStation(hwinsta)
+                    hdesk = user32.OpenDesktopW("Default", 0, False, 0x01FF)
+                    if hdesk:
+                        user32.SetThreadDesktop(hdesk)
+            except Exception:
+                pass
+
+            target_hwnd = None
+            WNDENUMPROC = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+
+            def _enum_cb(h, _):
+                nonlocal target_hwnd
+                cls_buf = ctypes.create_unicode_buffer(256)
+                user32.GetClassNameW(h, cls_buf, 256)
+                if cls_buf.value == "MetaQuotes::MetaTrader::5.00":
+                    target_hwnd = h
+                    return False
+                return True
+
+            user32.EnumWindows(WNDENUMPROC(_enum_cb), 0)
+            return target_hwnd
+        except Exception as e:
+            logger.debug(f"Could not locate MT5 window handle: {e}")
+            return None
+
+    def hide_terminal(self) -> bool:
+        """Hide the MetaTrader 5 terminal window (runs silently in the background)."""
+        try:
+            import ctypes
+            user32 = ctypes.windll.user32
+            hwnd = self.get_terminal_hwnd()
+            if hwnd:
+                SW_HIDE = 0
+                user32.ShowWindow(hwnd, SW_HIDE)
+                logger.info(f"🙈 MetaTrader 5 terminal window (HWND {hwnd}) hidden in the background.")
+                return True
+        except Exception as e:
+            logger.debug(f"Failed to hide MT5 window: {e}")
+        return False
+
+    def show_terminal(self) -> bool:
+        """Show and restore the MetaTrader 5 terminal window on the desktop."""
+        try:
+            import ctypes
+            user32 = ctypes.windll.user32
+            hwnd = self.get_terminal_hwnd()
+            if hwnd:
+                SW_RESTORE = 9
+                user32.ShowWindow(hwnd, SW_RESTORE)
+                user32.SetForegroundWindow(hwnd)
+                logger.info(f"👁️ MetaTrader 5 terminal window (HWND {hwnd}) restored to desktop.")
+                return True
+        except Exception as e:
+            logger.debug(f"Failed to show MT5 window: {e}")
+        return False
+
+    def is_terminal_visible(self) -> bool:
+        """Check if MetaTrader 5 terminal window is currently visible."""
+        try:
+            import ctypes
+            user32 = ctypes.windll.user32
+            hwnd = self.get_terminal_hwnd()
+            if hwnd:
+                return bool(user32.IsWindowVisible(hwnd))
+        except Exception:
+            pass
+        return False
+
+    def toggle_terminal_visibility(self) -> bool:
+        """Toggle MetaTrader 5 terminal visibility. Returns True if now visible, False if hidden."""
+        if self.is_terminal_visible():
+            self.hide_terminal()
+            return False
+        else:
+            self.show_terminal()
+            return True
 
     # ── Market Data ──────────────────────────────────────────────────────
 
