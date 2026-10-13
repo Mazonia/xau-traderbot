@@ -1979,7 +1979,13 @@ class TelegramNotifier:
             logger.error("Telegram bot is not enabled. Check TELEGRAM_BOT_TOKEN.")
             return
 
-        app = ApplicationBuilder().token(self.bot_token).request(self._get_request()).build()
+        app = (
+            ApplicationBuilder()
+            .token(self.bot_token)
+            .request(self._get_request())
+            .get_updates_request(self._get_request())
+            .build()
+        )
         self._app = app
 
         # Register command handlers
