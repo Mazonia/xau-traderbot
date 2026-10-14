@@ -198,13 +198,21 @@ python main.py --dashboard
 python main.py
 ```
 
+### 🛑 Managing Background Processes
+- **Stop Trading Bot Cleanly**: Double-click `stop_bot.bat` (safely terminates only the bot process without affecting any other desktop windows).
+- **Toggle MetaTrader 5 Terminal Visibility**: Double-click `toggle_mt5.bat` or send `/show_mt5` / `/hide_mt5` from Telegram to toggle MT5 charts visible or hidden on your desktop.
+
 ### Retrain XGBoost AI Model
 To fetch fresh M5/M15 historical data from MT5 and train the XGBoost classifier on 10,000 candles:
 ```bash
 python scripts/train_ai.py
 ```
 
-### Run Diagnostic System Audit
+### Run Diagnostic System Audit & Automated Tests
+To run the automated test suite verifying trading rules, regime detection, risk management, and security:
+```bash
+python -m pytest tests/ -v
+```
 To test MT5 connectivity, Gemini LLM API, News Deduplication, Web Dashboard, and Self-Attention Engine:
 ```bash
 python audit_full_system.py

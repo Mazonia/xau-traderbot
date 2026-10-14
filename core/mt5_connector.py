@@ -175,16 +175,10 @@ class MT5Connector:
 
             user32 = ctypes.windll.user32
 
-            # Ensure current thread has access to WinSta0 and Default desktop
-            try:
-                hwinsta = user32.OpenWindowStationW("WinSta0", False, 0x00000004 | 0x0000037F)
-                if hwinsta:
-                    user32.SetProcessWindowStation(hwinsta)
-                    hdesk = user32.OpenDesktopW("Default", 0, False, 0x01FF)
-                    if hdesk:
-                        user32.SetThreadDesktop(hdesk)
-            except Exception:
-                pass
+            # Fast direct check first without desktop switching
+            direct_hwnd = user32.FindWindowW("MetaQuotes::MetaTrader::5.00", None)
+            if direct_hwnd:
+                return direct_hwnd
 
             target_hwnd = None
             WNDENUMPROC = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
@@ -199,6 +193,26 @@ class MT5Connector:
                 return True
 
             user32.EnumWindows(WNDENUMPROC(_enum_cb), 0)
+            if target_hwnd:
+                return target_hwnd
+
+            # Fallback across desktops only if not found on current desktop
+            try:
+                hwinsta = user32.OpenWindowStationW("WinSta0", False, 0x00000004 | 0x0000037F)
+                if hwinsta:
+                    orig_winsta = user32.GetProcessWindowStation()
+                    user32.SetProcessWindowStation(hwinsta)
+                    hdesk = user32.OpenDesktopW("Default", 0, False, 0x01FF)
+                    if hdesk:
+                        user32.SetThreadDesktop(hdesk)
+                        user32.EnumWindows(WNDENUMPROC(_enum_cb), 0)
+                        user32.CloseDesktop(hdesk)
+                    if orig_winsta:
+                        user32.SetProcessWindowStation(orig_winsta)
+                    user32.CloseWindowStation(hwinsta)
+            except Exception:
+                pass
+
             return target_hwnd
         except Exception as e:
             logger.debug(f"Could not locate MT5 window handle: {e}")
