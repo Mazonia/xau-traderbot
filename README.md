@@ -5,7 +5,7 @@
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.100%2B-009688.svg)](https://fastapi.tiangolo.com/)
 [![XGBoost](https://img.shields.io/badge/XGBoost-AI-green.svg)](https://xgboost.readthedocs.io/)
 [![Gemini LLM](https://img.shields.io/badge/Google-Gemini_2.0_Flash-4285F4.svg)](https://ai.google.dev/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
 
 An institutional-grade, fully autonomous AI trading bot designed for **XAUUSD (Gold)** on **MetaTrader 5**. Features a **Temporal Self-Attention Market Scorer**, **XGBoost Machine Learning Engine**, **LLM Self-Learning & Failure Memory**, **Multi-Layer News Deduplication**, **Pending Order Guardian**, and a **Real-Time Web Dashboard** with live TradingView position overlays.
 
