@@ -8,6 +8,7 @@ Handles the full lifecycle of trade execution:
 - Order logging to database
 """
 
+import re
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -64,7 +65,7 @@ class TradeExecutor:
         symbol = None  # Uses default from settings
 
         # ── 1. Risk Check ────────────────────────────────────────────────
-        can_trade, reason = self.risk.can_trade(symbol)
+        can_trade, reason = self.risk.can_trade(symbol, strategy=signal.strategy)
         if not can_trade:
             logger.warning(f"Risk check failed: {reason}")
             # Record the rejected signal
@@ -192,6 +193,9 @@ class TradeExecutor:
             price_at_signal=actual_price,
         )
 
+        # Record trade timestamp for cooldown tracking
+        self.risk.record_trade_execution(strategy=signal.strategy)
+
         logger.success(
             f"🎯 TRADE EXECUTED | {direction} {lot_size} lots @ {actual_price} | "
             f"SL: {signal.stop_loss} | TP: {signal.take_profit} | "
@@ -218,7 +222,8 @@ class TradeExecutor:
             logger.warning(f"Position {ticket} not found")
             return False
 
-        success = self.mt5.close_position(ticket, comment=f"close_{reason}")
+        clean_reason = re.sub(r'[^a-zA-Z0-9_]', '_', str(reason))[:20]
+        success = self.mt5.close_position(ticket, comment=f"c_{clean_reason}")
 
         if success:
             deal_info = self.mt5.get_closed_deal_info(ticket)

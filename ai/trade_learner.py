@@ -290,19 +290,23 @@ class TradeLearner:
         """
         strat = strategy_name.lower()
         mult = self.strategy_multipliers.get(strat, 1.0)
+        settings = get_settings()
+        strat_params = getattr(settings, f"{strat}_params", {}) or {}
+        base_min_confluence = float(strat_params.get("min_confluence_score", 50.0))
 
-        # 1. Strategy heavily penalized check
+        # 1. Strategy heavily penalized check - require elevated hurdle instead of unconditional veto
+        penalty = 0.0
         if mult < 0.65:
             penalty = 6.0
-            return (
-                False,
-                f"Strategy '{strat.upper()}' is currently penalized (confidence: {mult:.2f}x). Requires +{penalty:.0f} higher confluence.",
-                penalty,
-            )
+            hurdle = base_min_confluence + penalty
+            if confluence_score < hurdle:
+                return (
+                    False,
+                    f"Strategy '{strat.upper()}' is penalized ({mult:.2f}x). Confluence {confluence_score:.1f} < required {hurdle:.1f} (+{penalty:.0f} hurdle).",
+                    penalty,
+                )
 
         # 2. Match against active mistake memories
-        settings = get_settings()
-        base_min_confluence = float(settings.scalping_params.get("min_confluence_score", 50.0))
         veto_threshold = base_min_confluence + 8.0
 
         for m in reversed(self.mistake_memory[-15:]):
@@ -317,6 +321,8 @@ class TradeLearner:
                         8.0,
                     )
 
+        if penalty > 0:
+            return (True, f"Signal cleared adaptive checks (penalty +{penalty:.0f} applied).", penalty)
         return (True, "Signal cleared all adaptive learning checks.", 0.0)
 
     # ── Inspection & Reporting ────────────────────────────────────────────

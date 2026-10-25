@@ -94,8 +94,10 @@ class DayTradingStrategy(BaseStrategy):
         # ATR
         atr = float(df["atr"].iloc[-1]) if "atr" in df.columns and not pd.isna(df["atr"].iloc[-1]) else 2.0
 
-        # ADX
+        # ADX & Directional Movement
         adx = float(df["adx"].iloc[-1]) if "adx" in df.columns and not pd.isna(df["adx"].iloc[-1]) else 0
+        di_plus = float(df["di_plus"].iloc[-1]) if "di_plus" in df.columns and not pd.isna(df["di_plus"].iloc[-1]) else 0
+        di_minus = float(df["di_minus"].iloc[-1]) if "di_minus" in df.columns and not pd.isna(df["di_minus"].iloc[-1]) else 0
 
         # Support/Resistance
         sr_levels = ta.find_support_resistance(df)
@@ -112,6 +114,8 @@ class DayTradingStrategy(BaseStrategy):
             "candlestick_patterns": patterns,
             "atr": atr,
             "adx": adx,
+            "di_plus": di_plus,
+            "di_minus": di_minus,
             "support_resistance": sr_levels,
         }
 
@@ -150,15 +154,18 @@ class DayTradingStrategy(BaseStrategy):
             bullish_score += 20
             reasons.append("✅ Bullish RSI divergence — high conviction")
 
-        # 4. Bollinger Band position: price near lower band = buy opportunity (+10)
+        # 4. Bollinger Band position: price near lower band = buy opportunity (+10 only in ranging or with RSI divergence)
         if bb_pctb < 0.3:
-            bullish_score += 10
-            reasons.append(f"✅ Price near lower Bollinger Band (%B={bb_pctb:.2f})")
+            if analysis["adx"] < 25 or rsi["divergence"] == "BULLISH":
+                bullish_score += 10
+                reasons.append(f"✅ Price near lower Bollinger Band (%B={bb_pctb:.2f})")
+            else:
+                reasons.append(f"⚠️ Lower Bollinger Band in trending market (%B={bb_pctb:.2f}) — avoiding falling knife")
 
-        # 5. ADX confirms trend strength (+10)
-        if analysis["adx"] > 25:
+        # 5. ADX confirms trend strength in bullish direction (+DI > -DI) (+10)
+        if analysis["adx"] > 25 and analysis.get("di_plus", 0) > analysis.get("di_minus", 0):
             bullish_score += 10
-            reasons.append(f"✅ ADX {analysis['adx']:.1f} confirms trend strength")
+            reasons.append(f"✅ ADX {analysis['adx']:.1f} (+DI > -DI) confirms bullish trend")
 
         # 6. Candlestick confirmation (+5)
         bullish_patterns = [p for p in patterns if p["direction"] == "BULLISH"]
@@ -187,13 +194,18 @@ class DayTradingStrategy(BaseStrategy):
             bearish_score += 20
             reasons.append("✅ Bearish RSI divergence — high conviction")
 
+        # 4. Bollinger Band position: price near upper band in ranging or with bearish divergence
         if bb_pctb > 0.7:
-            bearish_score += 10
-            reasons.append(f"✅ Price near upper Bollinger Band (%B={bb_pctb:.2f})")
+            if analysis["adx"] < 25 or rsi["divergence"] == "BEARISH":
+                bearish_score += 10
+                reasons.append(f"✅ Price near upper Bollinger Band (%B={bb_pctb:.2f})")
+            else:
+                reasons.append(f"⚠️ Upper Bollinger Band in trending market (%B={bb_pctb:.2f}) — avoiding strong momentum breakout")
 
-        if analysis["adx"] > 25:
+        # 5. ADX confirms trend strength in bearish direction (-DI > +DI) (+10)
+        if analysis["adx"] > 25 and analysis.get("di_minus", 0) > analysis.get("di_plus", 0):
             bearish_score += 10
-            reasons.append(f"✅ ADX {analysis['adx']:.1f} confirms trend")
+            reasons.append(f"✅ ADX {analysis['adx']:.1f} (-DI > +DI) confirms bearish trend")
 
         bearish_patterns = [p for p in patterns if p["direction"] == "BEARISH"]
         if bearish_patterns:

@@ -11,10 +11,11 @@ Handles:
 
 import time
 import functools
+import re
 import threading
 from datetime import datetime, timedelta, timezone
 from enum import Enum
-from typing import Optional
+from typing import Optional, Any
 
 import MetaTrader5 as mt5
 import numpy as np
@@ -539,6 +540,14 @@ class MT5Connector:
             pass
         return mt5.ORDER_FILLING_RETURN
 
+    @staticmethod
+    def _sanitize_comment(comment: Any, max_len: int = 27) -> str:
+        """Sanitize and truncate comment string for strict MT5 protocol compliance."""
+        if not comment:
+            return ""
+        clean = re.sub(r'[^a-zA-Z0-9_\-]', '_', str(comment))
+        return clean[:max_len]
+
     @synchronized
     def send_market_order(
         self,
@@ -590,6 +599,7 @@ class MT5Connector:
             return None
 
         slippage = int(self.settings.risk_params.get("max_slippage_points", 50))
+        safe_comment = self._sanitize_comment(comment, max_len=27)
         request = {
             "action": mt5.TRADE_ACTION_DEAL,
             "symbol": symbol,
@@ -600,7 +610,7 @@ class MT5Connector:
             "tp": tp,
             "deviation": slippage,  # Max price deviation in points
             "magic": magic,
-            "comment": comment,
+            "comment": safe_comment,
             "type_time": mt5.ORDER_TIME_GTC,
             "type_filling": self._get_filling_mode(symbol),
         }
@@ -676,6 +686,7 @@ class MT5Connector:
             return None
 
         slippage = int(self.settings.risk_params.get("max_slippage_points", 50))
+        safe_comment = self._sanitize_comment(comment, max_len=27)
         request = {
             "action": mt5.TRADE_ACTION_PENDING,
             "symbol": symbol,
@@ -686,7 +697,7 @@ class MT5Connector:
             "tp": round(tp, 2) if tp else 0.0,
             "deviation": slippage,
             "magic": magic,
-            "comment": comment,
+            "comment": safe_comment,
             "type_time": mt5.ORDER_TIME_GTC,
             "type_filling": self._get_filling_mode(symbol),
         }
@@ -798,6 +809,7 @@ class MT5Connector:
             price = tick.ask
 
         slippage = int(self.settings.risk_params.get("max_slippage_points", 50))
+        safe_comment = self._sanitize_comment(comment, max_len=27)
         request = {
             "action": mt5.TRADE_ACTION_DEAL,
             "symbol": symbol,
@@ -807,12 +819,22 @@ class MT5Connector:
             "price": price,
             "deviation": slippage,
             "magic": position.magic,
-            "comment": comment,
+            "comment": safe_comment,
             "type_time": mt5.ORDER_TIME_GTC,
             "type_filling": self._get_filling_mode(symbol),
         }
 
         result = mt5.order_send(request)
+
+        # Failsafe retry: If order failed and a comment was used, retry immediately with empty comment
+        if (result is None or result.retcode != mt5.TRADE_RETCODE_DONE) and safe_comment:
+            err_msg = str(result.comment if result else mt5.last_error())
+            logger.warning(
+                f"Close position {ticket} failed with comment '{safe_comment}' ({err_msg}). "
+                f"Retrying immediately with clean empty comment..."
+            )
+            request["comment"] = ""
+            result = mt5.order_send(request)
 
         if result and result.retcode == mt5.TRADE_RETCODE_DONE:
             logger.success(

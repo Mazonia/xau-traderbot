@@ -115,16 +115,16 @@ class SignalAggregator:
                 ai_contrib = ai_confidence * self.ai_weight
                 reasons.append(f"🤖 AI: BEARISH (conf={ai_confidence:.0%}) → +{ai_contrib:.1f} pts")
             elif ai_direction == "HOLD":
-                ai_contrib = self.ai_weight * 0.3  # Neutral contribution
-                reasons.append(f"🤖 AI: NEUTRAL → +{ai_contrib:.1f} pts (neutral)")
+                ai_contrib = 0.0  # Indecision/Neutral gives 0 bonus points (no free points)
+                reasons.append("🤖 AI: NEUTRAL (HOLD) → +0.0 pts (no directional edge)")
             else:
-                # AI disagrees with strategy — penalize
-                ai_contrib = -self.ai_weight * 0.3
-                reasons.append(f"🤖 AI: OPPOSING signal → {ai_contrib:.1f} pts (penalized)")
+                # AI disagrees with strategy — penalize proportionally to AI confidence
+                penalty_factor = max(0.4, ai_confidence)
+                ai_contrib = -self.ai_weight * penalty_factor
+                reasons.append(f"🤖 AI: OPPOSING signal ({ai_direction} {ai_confidence:.0%}) → {ai_contrib:.1f} pts (penalized)")
         else:
-            # No AI available — use partial weight as neutral
-            ai_contrib = self.ai_weight * 0.4
-            reasons.append(f"🤖 AI: unavailable → +{ai_contrib:.1f} pts (default)")
+            ai_contrib = 0.0
+            reasons.append("🤖 AI: unavailable → +0.0 pts")
 
         # ── 3. News Sentiment Score ──────────────────────────────────────
         sentiment_contrib = 0.0
@@ -139,29 +139,37 @@ class SignalAggregator:
                 sentiment_contrib = abs(sent_score) * self.sentiment_weight
                 reasons.append(f"📰 Sentiment: BEARISH ({sent_score:+.2f}) → +{sentiment_contrib:.1f} pts")
             elif sent_direction == "NEUTRAL":
-                sentiment_contrib = self.sentiment_weight * 0.3
-                reasons.append(f"📰 Sentiment: NEUTRAL → +{sentiment_contrib:.1f} pts")
+                sentiment_contrib = 0.0  # Neutral news gives 0 bonus
+                reasons.append("📰 Sentiment: NEUTRAL → +0.0 pts")
             else:
                 # Sentiment opposes strategy
-                sentiment_contrib = -self.sentiment_weight * 0.2
+                sentiment_contrib = -self.sentiment_weight * max(0.3, abs(sent_score))
                 reasons.append(f"📰 Sentiment: OPPOSING ({sent_score:+.2f}) → {sentiment_contrib:.1f} pts")
         else:
-            sentiment_contrib = self.sentiment_weight * 0.3
-            reasons.append(f"📰 Sentiment: unavailable → +{sentiment_contrib:.1f} pts (default)")
+            sentiment_contrib = 0.0
+            reasons.append("📰 Sentiment: unavailable → +0.0 pts")
 
         # ── 4. Regime Alignment Score ────────────────────────────────────
         regime_contrib = 0.0
+        is_counter_trend = False
         if regime_analysis:
             is_recommended = regime_analysis.get("is_recommended", True)
-            if is_recommended:
+            trend_dir = regime_analysis.get("trend_direction", "NEUTRAL")
+            regime_name = regime_analysis.get("regime", "")
+
+            if (trend_dir == "UP" and strategy_signal.direction == SignalDirection.SELL) or \
+               (trend_dir == "DOWN" and strategy_signal.direction == SignalDirection.BUY):
+                is_counter_trend = True
+
+            if is_recommended and not is_counter_trend:
                 regime_contrib = self.regime_weight
-                reasons.append(f"🌊 Regime: ALIGNED → +{regime_contrib:.1f} pts")
+                reasons.append(f"🌊 Regime: ALIGNED ({regime_name}) → +{regime_contrib:.1f} pts")
             else:
-                regime_contrib = -self.regime_weight * 0.5
-                reasons.append(f"🌊 Regime: MISALIGNED → {regime_contrib:.1f} pts")
+                regime_contrib = -self.regime_weight
+                reasons.append(f"🌊 Regime: COUNTER-TREND ({regime_name} {trend_dir} vs {strategy_signal.direction.value}) → {regime_contrib:.1f} pts")
         else:
-            regime_contrib = self.regime_weight * 0.5
-            reasons.append(f"🌊 Regime: unavailable → +{regime_contrib:.1f} pts (default)")
+            regime_contrib = 0.0
+            reasons.append("🌊 Regime: unavailable → +0.0 pts")
 
         # ── 5. Temporal Self-Attention Alignment (Book Ch. 5) ─────────────
         attention_contrib = 0.0
@@ -179,25 +187,30 @@ class SignalAggregator:
         if regime_analysis:
             regime_name = regime_analysis.get("regime", "")
             vol_level = regime_analysis.get("volatility", "")
-            if regime_name == "TRENDING":
-                effective_min_score -= 3.0
-                reasons.append(f"🎯 Dynamic Threshold: -3.0 pts for TRENDING momentum (Target: {effective_min_score:.1f})")
+            if "TREND" in regime_name:
+                effective_min_score -= 2.0
+                reasons.append(f"🎯 Dynamic Threshold: -2.0 pts for TRENDING momentum (Target: {effective_min_score:.1f})")
             elif regime_name == "RANGING":
-                effective_min_score += 2.0
-                reasons.append(f"🎯 Dynamic Threshold: +2.0 pts for RANGING chop filter (Target: {effective_min_score:.1f})")
+                effective_min_score += 3.0
+                reasons.append(f"🎯 Dynamic Threshold: +3.0 pts for RANGING chop filter (Target: {effective_min_score:.1f})")
 
             if vol_level == "HIGH":
-                effective_min_score += 4.0
-                reasons.append(f"🎯 Dynamic Threshold: +4.0 pts for HIGH VOLATILITY shield (Target: {effective_min_score:.1f})")
+                effective_min_score += 5.0
+                reasons.append(f"🎯 Dynamic Threshold: +5.0 pts for HIGH VOLATILITY shield (Target: {effective_min_score:.1f})")
 
         # ── Final Score ──────────────────────────────────────────────────
         total_score = max(0.0, min(100.0, technical_contrib + ai_contrib + sentiment_contrib + regime_contrib + attention_contrib))
+        allow_counter = regime_analysis.get("allow_counter_trend", False) if regime_analysis else False
+
         should_execute = (
             total_score >= effective_min_score
             and strategy_signal.direction != SignalDirection.HOLD
+            and (allow_counter or not is_counter_trend)
         )
 
-        if should_execute:
+        if not should_execute and is_counter_trend and not allow_counter:
+            reasons.append(f"🚫 VETOED: Counter-trend entries prohibited in {trend_dir} market")
+        elif should_execute:
             reasons.append(
                 f"✅ CONFLUENCE MET: {total_score:.1f}/{effective_min_score:.1f} — EXECUTE"
             )

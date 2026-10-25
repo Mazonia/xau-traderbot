@@ -37,6 +37,10 @@ class RiskManager:
         self._max_concurrent_override: Optional[int] = None
         self._daily_loss_triggered = False
         self._last_reset_date = None
+        self._last_trade_times: dict[str, datetime] = {}
+        self._global_last_trade_time: Optional[datetime] = None
+        self.min_cooldown_seconds: int = 120  # 2 minutes global cooldown between trades
+        self.strategy_cooldown_seconds: int = 300  # 5 minutes per-strategy cooldown
 
     def _check_mode_sync(self):
         """Ensure overrides are reset if the trading mode changes."""
@@ -111,9 +115,61 @@ class RiskManager:
     def max_lot(self) -> float:
         return float(get_settings().risk_params.get("max_lot_size", 0.10))
 
-    def can_trade(self, symbol: str | None = None) -> tuple[bool, str]:
+    def record_trade_execution(self, strategy: str = "scalping"):
+        """Record trade execution timestamp for cooldown enforcement."""
+        now = datetime.now(timezone.utc)
+        self._global_last_trade_time = now
+        self._last_trade_times[strategy.lower()] = now
+
+    def check_duplicate_strategy(self, strategy: str, symbol: str | None = None) -> tuple[bool, str]:
+        """
+        Check if there is already an active open position for this strategy.
+        Prevents rapid-fire stacking of duplicate positions.
+        """
+        clean_strat = strategy.lower().strip()
+        # 1. Check MT5 open positions comments
+        open_positions = self.mt5.get_open_positions(symbol)
+        for pos in open_positions:
+            comment = str(pos.get("comment", "")).lower()
+            if clean_strat in comment:
+                return True, f"Strategy '{strategy}' already has an active open position (ticket #{pos.get('ticket')})"
+
+        # 2. Check Database open trades for this strategy
+        try:
+            open_trades = crud.get_open_trades()
+            for t in open_trades:
+                if t.strategy.lower() == clean_strat:
+                    return True, f"Strategy '{strategy}' already has an active open position in DB (ticket #{t.ticket})"
+        except Exception:
+            pass
+
+        return False, ""
+
+    def check_cooldown(self, strategy: str) -> tuple[bool, str]:
+        """Check if trading cooldown is active."""
+        now = datetime.now(timezone.utc)
+        if self._global_last_trade_time is not None:
+            elapsed_global = (now - self._global_last_trade_time).total_seconds()
+            if elapsed_global < self.min_cooldown_seconds:
+                remaining = int(self.min_cooldown_seconds - elapsed_global)
+                return True, f"Global trading cooldown active ({remaining}s remaining)"
+
+        strat_time = self._last_trade_times.get(strategy.lower())
+        if strat_time is not None:
+            elapsed_strat = (now - strat_time).total_seconds()
+            if elapsed_strat < self.strategy_cooldown_seconds:
+                remaining = int(self.strategy_cooldown_seconds - elapsed_strat)
+                return True, f"Strategy '{strategy}' cooldown active ({remaining}s remaining)"
+
+        return False, ""
+
+    def can_trade(self, symbol: str | None = None, strategy: str | None = None) -> tuple[bool, str]:
         """
         Check if trading is currently allowed.
+
+        Args:
+            symbol: Trading symbol (optional)
+            strategy: Strategy name (optional) - if provided, checks per-strategy limits and cooldowns
 
         Returns:
             Tuple of (can_trade: bool, reason: str)
@@ -149,7 +205,17 @@ class RiskManager:
         if len(open_positions) >= self.max_concurrent:
             return False, f"Max concurrent trades reached ({len(open_positions)}/{self.max_concurrent})"
 
-        # 3. Free margin check
+        # 3. Strategy Isolation & Duplicate Protection
+        if strategy:
+            is_dup, dup_reason = self.check_duplicate_strategy(strategy, symbol)
+            if is_dup:
+                return False, dup_reason
+
+            is_cool, cool_reason = self.check_cooldown(strategy)
+            if is_cool:
+                return False, cool_reason
+
+        # 4. Free margin check
         margin = float(account.get("margin", 0.0) or 0.0)
         margin_level = account.get("margin_level")
         # In MetaTrader 5, margin_level is 0.0 when no positions are open (margin == 0).
@@ -162,12 +228,12 @@ class RiskManager:
         if free_margin_pct < self.min_free_margin_pct:
             return False, f"Free margin too low ({free_margin_pct:.1f}%)"
 
-        # 4. Spread check
+        # 5. Spread check
         tick = self.mt5.get_current_tick(symbol)
         if tick and tick["spread"] > self.max_spread:
             return False, f"Spread too wide ({tick['spread']:.1f} > {self.max_spread} points)"
 
-        # 5. Trading allowed on account
+        # 6. Trading allowed on account
         if not account.get("trade_allowed", True):
             return False, "Trading not allowed on this account"
 

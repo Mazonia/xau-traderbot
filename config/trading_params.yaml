@@ -224,7 +224,7 @@ confluence:
   regime_weight: 15
 trailing_stop:
   enabled: true
-  breakeven_trigger_rr: 1.0
+  breakeven_trigger_rr: 1.2
   partial_close_pct: 50
   atr_trail_multiplier: 2.0
 telegram:

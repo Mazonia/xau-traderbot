@@ -342,6 +342,22 @@ class TradingBot:
                         if not signal.is_actionable:
                             continue
 
+                        # Check regime directional alignment and counter-trend allowance
+                        trend_dir = regime.trend_direction if regime else "NEUTRAL"
+                        is_aligned = True
+                        if trend_dir == "UP" and signal.direction.value == "SELL":
+                            is_aligned = False
+                        elif trend_dir == "DOWN" and signal.direction.value == "BUY":
+                            is_aligned = False
+
+                        allow_counter = bool(self.settings.active_mode_config.get("allow_counter_trend", False))
+                        if not is_aligned and not allow_counter:
+                            logger.info(
+                                f"🚫 Counter-trend signal vetoed: {signal.direction.value} {strategy_name} "
+                                f"in {regime.regime.value if regime else 'TREND'} ({trend_dir} trend)"
+                            )
+                            continue
+
                         # Compute temporal self-attention alignment (Book Ch. 5)
                         attention_analysis = self.attention_scorer.analyze_alignment(
                             df=df,
@@ -354,9 +370,11 @@ class TradingBot:
                             ai_prediction=ai_prediction,
                             sentiment=sentiment,
                             regime_analysis={
-                                "is_recommended": True,
+                                "is_recommended": is_aligned,
                                 "position_modifier": regime.position_size_modifier if regime else 1.0,
                                 "regime": regime.regime.value if regime else "RANGING",
+                                "trend_direction": trend_dir,
+                                "allow_counter_trend": allow_counter,
                                 "adx": getattr(regime, "adx_value", 15.0) if regime else 15.0,
                                 "volatility": getattr(regime, "volatility_label", "NORMAL") if regime else "NORMAL",
                             },

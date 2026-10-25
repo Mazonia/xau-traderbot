@@ -20,6 +20,29 @@ if hasattr(sys.stderr, "reconfigure"):
 from loguru import logger
 
 
+
+_INSTANCE_SOCKET = None
+
+def ensure_single_instance(port: int = 9015):
+    """Ensure only one instance of the trading bot runs at a time."""
+    global _INSTANCE_SOCKET
+    import socket
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        s.bind(('127.0.0.1', port))
+        _INSTANCE_SOCKET = s
+        return s
+    except OSError:
+        logger.warning(
+            "\n" + "=" * 70 + "\n"
+            "⚠️  XAUUSD Trading Bot is ALREADY RUNNING in the background!\n"
+            "    To prevent duplicate trades and Telegram conflicts, this new\n"
+            "    instance will safely exit.\n"
+            "    To restart cleanly, run 'stop_bot.bat' first, then 'run.bat'.\n"
+            + "=" * 70
+        )
+        sys.exit(0)
+
 def parse_args():
     parser = argparse.ArgumentParser(
         description="XAUUSD AI Trading Bot",
@@ -128,6 +151,7 @@ def start_dashboard():
 
 def run_telegram():
     """Start the full Trading Bot in Standby Mode with 2-way Telegram Command Center active."""
+    ensure_single_instance()
     from core.bot import TradingBot
 
     logger.info("=" * 60)
@@ -190,6 +214,7 @@ def main():
         asyncio.run(train_models())
 
     # Start the live trading bot
+    ensure_single_instance()
     from core.bot import TradingBot
 
     start_paused = getattr(args, "standby", False)

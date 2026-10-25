@@ -67,14 +67,26 @@ class TrailingStopManager:
         sl_distance = abs(entry_price - current_sl)
         tp_distance = abs(current_tp - entry_price)
 
-        # ── 1. Breakeven Check ───────────────────────────────────────────
+        # ── 1. Breakeven & Partial Close Check ───────────────────────────
         if ticket not in self._breakeven_applied:
             if pos_type == "BUY":
                 profit_distance = current_price - entry_price
                 breakeven_target = sl_distance * self.breakeven_rr
 
                 if profit_distance >= breakeven_target:
-                    # Move SL to breakeven (entry + small buffer)
+                    # 1a. Lock in partial profit if configured and position is large enough
+                    if ticket not in self._partial_closed and volume > 0.01:
+                        close_vol = round(volume * (self.partial_close_pct / 100.0), 2)
+                        rem_vol = round(volume - close_vol, 2)
+                        if close_vol >= 0.01 and rem_vol >= 0.01:
+                            if self.mt5.close_position(ticket, volume=close_vol, comment="tp1_partial"):
+                                self._partial_closed.add(ticket)
+                                logger.success(
+                                    f"💰 TP1 Partial Profit Secured on #{ticket} | "
+                                    f"Closed {close_vol} lots ({self.partial_close_pct}%) @ {current_price:.2f}"
+                                )
+
+                    # 1b. Move SL to breakeven (entry + small buffer)
                     tick = self.mt5.get_current_tick()
                     spread = tick["spread"] / 100 if tick else 0.5
                     new_sl = round(entry_price + spread, 2)
@@ -93,6 +105,19 @@ class TrailingStopManager:
                 breakeven_target = sl_distance * self.breakeven_rr
 
                 if profit_distance >= breakeven_target:
+                    # 1a. Lock in partial profit if configured and position is large enough
+                    if ticket not in self._partial_closed and volume > 0.01:
+                        close_vol = round(volume * (self.partial_close_pct / 100.0), 2)
+                        rem_vol = round(volume - close_vol, 2)
+                        if close_vol >= 0.01 and rem_vol >= 0.01:
+                            if self.mt5.close_position(ticket, volume=close_vol, comment="tp1_partial"):
+                                self._partial_closed.add(ticket)
+                                logger.success(
+                                    f"💰 TP1 Partial Profit Secured on #{ticket} | "
+                                    f"Closed {close_vol} lots ({self.partial_close_pct}%) @ {current_price:.2f}"
+                                )
+
+                    # 1b. Move SL to breakeven (entry - small buffer)
                     tick = self.mt5.get_current_tick()
                     spread = tick["spread"] / 100 if tick else 0.5
                     new_sl = round(entry_price - spread, 2)
