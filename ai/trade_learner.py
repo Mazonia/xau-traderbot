@@ -1,15 +1,19 @@
 """
-Continuous Self-Learning & Mistake Adaptation Engine
+Continuous Self-Learning & Mistake Adaptation Engine (v2 — Oct 2026)
 
 Equips the XAUUSD AI Trading Bot with:
 1. Post-Trade Performance Attribution & Mistake Diagnostics.
 2. Online Reinforcement Learning (Multi-Armed Bandit / ExpGrad) for Strategy & Confluence Weights.
 3. Mistake Memory Guard: An active screening layer preventing repeating known losing setups.
 4. Continuous Knowledge Persistence across restarts.
+5. Loss Streak Circuit Breaker with exponential cooldowns.
+6. Fuzzy Mistake Memory Matching across similar regime/trap types.
+7. Rolling Win-Rate Gating — suspends strategies with < 30% win rate.
 """
 
 import json
 import asyncio
+from collections import deque
 from datetime import datetime, timezone, timedelta
 from typing import Optional, Any
 from loguru import logger
@@ -17,6 +21,34 @@ from loguru import logger
 from database import crud
 from database.models import TradeLesson, AdaptiveWeight
 from config.settings import get_settings
+
+
+# ── Fuzzy Regime Similarity Map ──────────────────────────────────────────
+# Regimes that are "directionally similar" for mistake matching purposes.
+_REGIME_FAMILY = {
+    "STRONG_TREND_UP": "TREND_UP",
+    "MODERATE_TREND_UP": "TREND_UP",
+    "STRONG_TREND_DOWN": "TREND_DOWN",
+    "MODERATE_TREND_DOWN": "TREND_DOWN",
+    "RANGING": "RANGING",
+    "HIGH_VOLATILITY": "HIGH_VOLATILITY",
+    "LOW_VOLATILITY": "RANGING",
+    "NEWS_EVENT": "NEWS_EVENT",
+}
+
+
+def _regime_family(regime: str) -> str:
+    """Map a specific regime to its directional family for fuzzy matching."""
+    if not regime:
+        return "NEUTRAL"
+    r = regime.upper().strip()
+    if r in _REGIME_FAMILY:
+        return _REGIME_FAMILY[r]
+    if "DOWN" in r or "BEAR" in r:
+        return "TREND_DOWN"
+    if "UP" in r or "BULL" in r:
+        return "TREND_UP"
+    return r
 
 
 class TradeLearner:
@@ -28,7 +60,7 @@ class TradeLearner:
 
     def __init__(self):
         self.settings = get_settings()
-        
+
         # Confluence component baseline weights (sums to 100)
         self.component_weights: dict[str, float] = {
             "technical": 40.0,
@@ -37,7 +69,7 @@ class TradeLearner:
             "regime": 15.0,
         }
 
-        # Strategy performance multipliers (bounded between 0.40 and 1.60)
+        # Strategy performance multipliers (bounded between 0.30 and 1.60)
         self.strategy_multipliers: dict[str, float] = {
             "scalping": 1.0,
             "day_trading": 1.0,
@@ -46,7 +78,41 @@ class TradeLearner:
 
         # Rolling active mistake memory signatures
         self.mistake_memory: list[dict] = []
-        
+
+        # ── Loss Streak Circuit Breaker ──────────────────────────────────
+        # Tracks consecutive losses per strategy for exponential cooldown
+        self._consecutive_losses: dict[str, int] = {
+            "scalping": 0,
+            "day_trading": 0,
+            "swing_trading": 0,
+        }
+        # Cooldown expiry timestamps per strategy (UTC)
+        self._cooldown_until: dict[str, Optional[datetime]] = {
+            "scalping": None,
+            "day_trading": None,
+            "swing_trading": None,
+        }
+        # Base cooldown escalation: 15min → 30min → 60min → 120min (session pause)
+        self._cooldown_escalation_minutes = [15, 30, 60, 120]
+
+        # ── Rolling Win-Rate Gating ──────────────────────────────────────
+        # Last N trade outcomes per strategy for win-rate tracking
+        self._rolling_outcomes: dict[str, deque] = {
+            "scalping": deque(maxlen=10),
+            "day_trading": deque(maxlen=10),
+            "swing_trading": deque(maxlen=10),
+        }
+        self._strategy_suspended: dict[str, bool] = {
+            "scalping": False,
+            "day_trading": False,
+            "swing_trading": False,
+        }
+        self._suspended_until: dict[str, Optional[datetime]] = {
+            "scalping": None,
+            "day_trading": None,
+            "swing_trading": None,
+        }
+
         # Load persisted adaptive state from database
         self._load_persisted_state()
 
@@ -75,9 +141,28 @@ class TradeLearner:
                     except Exception:
                         pass
 
+            # Rebuild rolling outcomes from recent lessons (last 24 hours only) to restore active win-rate state
+            all_recent = crud.get_recent_lessons(limit=50)
+            now_utc = datetime.now(timezone.utc)
+            cutoff_24h = now_utc - timedelta(hours=24)
+            for l in reversed(all_recent):  # oldest first so deque keeps most recent
+                strat = l.strategy if hasattr(l, "strategy") else ""
+                created = l.created_at
+                if created is not None:
+                    c_dt = created.replace(tzinfo=timezone.utc) if created.tzinfo is None else created
+                    if c_dt < cutoff_24h:
+                        continue
+                if strat in self._rolling_outcomes:
+                    self._rolling_outcomes[strat].append(l.outcome)
+
+            # Evaluate suspension state on startup
+            for strat in self._rolling_outcomes:
+                self._evaluate_win_rate_gating(strat)
+
             logger.info(
-                f"🧠 Self-Learning Engine initialized | Adaptive Multipliers: {self.strategy_multipliers} "
-                f"| Active Mistake Memories: {len(self.mistake_memory)}"
+                f"🧠 Self-Learning Engine v2 initialized | Adaptive Multipliers: {self.strategy_multipliers} "
+                f"| Active Mistake Memories: {len(self.mistake_memory)} "
+                f"| Suspended Strategies: {[s for s, v in self._strategy_suspended.items() if v]}"
             )
         except Exception as e:
             logger.warning(f"Could not load persisted learning state (using defaults): {e}")
@@ -105,18 +190,25 @@ class TradeLearner:
         else:
             outcome = "SCRATCH"
 
-        # 1. Adapt Strategy Multipliers
+        # ── Update Rolling Outcomes for Win-Rate Gating ──────────────────
+        if strategy in self._rolling_outcomes:
+            self._rolling_outcomes[strategy].append(outcome)
+
+        # ── 1. Adapt Strategy Multipliers ────────────────────────────────
         current_strat_mult = self.strategy_multipliers.get(strategy, 1.0)
         if outcome == "WIN":
-            # Reward successful strategy
-            new_strat_mult = min(1.60, current_strat_mult * 1.05)
+            # Reward successful strategy — slow recovery (earned, not given)
+            new_strat_mult = min(1.60, current_strat_mult * 1.03)
             lesson_cat = "WINNING_EXECUTION"
             summary = f"Successful {strategy.upper()} {order_type} execution in {regime} market. Captured +${profit:.2f} profit."
             defensive_rule = f"Maintain conviction on {strategy.upper()} when {regime} confluence exceeds {confluence:.0f}."
             sig = {}
+            # Reset consecutive loss counter on win
+            self._consecutive_losses[strategy] = 0
+            self._cooldown_until[strategy] = None
         elif outcome == "LOSS":
-            # Penalize and diagnose mistake
-            new_strat_mult = max(0.40, current_strat_mult * 0.88)
+            # Penalize and diagnose mistake — FAST decay
+            new_strat_mult = max(0.30, current_strat_mult * 0.78)
             lesson_cat, summary, defensive_rule, sig = self._diagnose_mistake(
                 trade_data=trade_data,
                 deal_info=deal_info,
@@ -129,10 +221,23 @@ class TradeLearner:
             sig["strategy"] = strategy
             sig["order_type"] = order_type
             sig["regime"] = regime
+            sig["regime_family"] = _regime_family(regime)
             sig["timestamp"] = datetime.now(timezone.utc).isoformat()
             self.mistake_memory.append(sig)
-            if len(self.mistake_memory) > 30:
+            if len(self.mistake_memory) > 40:
                 self.mistake_memory.pop(0)
+
+            # ── Loss Streak Circuit Breaker ──────────────────────────────
+            self._consecutive_losses[strategy] = self._consecutive_losses.get(strategy, 0) + 1
+            streak = self._consecutive_losses[strategy]
+            if streak >= 3:
+                cooldown_idx = min(streak - 3, len(self._cooldown_escalation_minutes) - 1)
+                cooldown_mins = self._cooldown_escalation_minutes[cooldown_idx]
+                self._cooldown_until[strategy] = datetime.now(timezone.utc) + timedelta(minutes=cooldown_mins)
+                logger.warning(
+                    f"🚨 LOSS STREAK CIRCUIT BREAKER: {strategy.upper()} has {streak} consecutive losses. "
+                    f"Imposing {cooldown_mins}min cooldown until {self._cooldown_until[strategy].strftime('%H:%M:%S UTC')}"
+                )
         else:
             new_strat_mult = current_strat_mult
             lesson_cat = "BREAKEVEN_EXIT"
@@ -145,7 +250,11 @@ class TradeLearner:
         # 2. Adapt Confluence Component Weights
         self._adapt_confluence_weights(outcome=outcome, trade_data=trade_data)
 
-        # 3. Persist Lesson to Database
+        # 3. Evaluate Win-Rate Gating
+        if strategy in self._rolling_outcomes:
+            self._evaluate_win_rate_gating(strategy)
+
+        # 4. Persist Lesson to Database
         try:
             crud.save_trade_lesson(
                 ticket=ticket,
@@ -183,7 +292,8 @@ class TradeLearner:
 
         logger.info(
             f"🎓 Learned from Trade #{ticket} | Outcome: {outcome} (${profit:+.2f}) | "
-            f"Category: {lesson_cat} | New {strategy} Multiplier: {self.strategy_multipliers[strategy]:.2f}x"
+            f"Category: {lesson_cat} | New {strategy} Multiplier: {self.strategy_multipliers[strategy]:.2f}x | "
+            f"Streak: {self._consecutive_losses.get(strategy, 0)} consecutive losses"
         )
 
         return {
@@ -195,6 +305,7 @@ class TradeLearner:
             "defensive_rule": defensive_rule,
             "strategy_multiplier": self.strategy_multipliers[strategy],
             "component_weights": dict(self.component_weights),
+            "consecutive_losses": self._consecutive_losses.get(strategy, 0),
         }
 
     def _diagnose_mistake(
@@ -241,7 +352,16 @@ class TradeLearner:
             sig["trap_type"] = "sentiment_divergence"
             return cat, summary, rule, sig
 
-        # Category 4: False Breakout / Quick Stop-out
+        # Category 4: Loss during high consecutive streak — pattern recognition failure
+        streak = self._consecutive_losses.get(strategy, 0)
+        if streak >= 2:
+            cat = "STREAK_PATTERN_FAILURE"
+            summary = f"Loss #{streak + 1} in a consecutive streak. Market conditions hostile to {strategy.upper()} approach."
+            rule = f"Strategy {strategy.upper()} requires mandatory cooldown and regime re-evaluation after {streak + 1} losses."
+            sig["trap_type"] = "streak_failure"
+            return cat, summary, rule, sig
+
+        # Category 5: False Breakout / Quick Stop-out
         cat = "VOLATILITY_EXPANSION_WHIPSAW"
         summary = f"Gold price action suffered sudden adverse volatility spike triggering stop-loss."
         rule = "Widen ATR-based stop buffer and verify volume expansion before confirming breakout entries."
@@ -273,6 +393,33 @@ class TradeLearner:
             for k in self.component_weights:
                 self.component_weights[k] = round((self.component_weights[k] / total) * 100.0, 1)
 
+    def _evaluate_win_rate_gating(self, strategy: str):
+        """Evaluate rolling win rate and suspend/unsuspend strategy."""
+        outcomes = self._rolling_outcomes.get(strategy, deque())
+        if len(outcomes) < 5:
+            # Not enough data to make a judgment
+            return
+
+        wins = sum(1 for o in outcomes if o == "WIN")
+        total = len(outcomes)
+        win_rate = wins / total
+
+        if win_rate < 0.30 and not self._strategy_suspended.get(strategy, False):
+            self._strategy_suspended[strategy] = True
+            # Auto-revalidation cooldown: 2-hour suspension cooldown instead of permanent lock
+            self._suspended_until[strategy] = datetime.now(timezone.utc) + timedelta(hours=2)
+            logger.warning(
+                f"⛔ WIN-RATE GATING: {strategy.upper()} suspended for 2h — "
+                f"rolling win rate {win_rate:.0%} ({wins}/{total}) below 30% threshold"
+            )
+        elif win_rate >= 0.40 and self._strategy_suspended.get(strategy, False):
+            self._strategy_suspended[strategy] = False
+            self._suspended_until[strategy] = None
+            logger.info(
+                f"✅ WIN-RATE GATING: {strategy.upper()} reinstated — "
+                f"rolling win rate recovered to {win_rate:.0%} ({wins}/{total})"
+            )
+
     # ── Prospective Signal Screening (Mistake Memory Guard) ───────────────
 
     def screen_prospective_signal(
@@ -284,7 +431,8 @@ class TradeLearner:
         sentiment_score: float = 0.0,
     ) -> tuple[bool, str, float]:
         """
-        Actively screen incoming signals against recent mistake memory.
+        Actively screen incoming signals against recent mistake memory,
+        loss streak cooldowns, and win-rate gating.
         Returns:
             (is_approved: bool, explanation: str, penalty_score: float)
         """
@@ -294,30 +442,88 @@ class TradeLearner:
         strat_params = getattr(settings, f"{strat}_params", {}) or {}
         base_min_confluence = float(strat_params.get("min_confluence_score", 50.0))
 
-        # 1. Strategy heavily penalized check - require elevated hurdle instead of unconditional veto
+        # ── 0. Win-Rate Gating Check ─────────────────────────────────────
+        if self._strategy_suspended.get(strat, False):
+            # Check if 2h probation cooldown expired -> reinstate strategy
+            susp_until = self._suspended_until.get(strat)
+            if susp_until and datetime.now(timezone.utc) >= susp_until:
+                self._strategy_suspended[strat] = False
+                self._suspended_until[strat] = None
+                logger.info(f"Probationary reinstatement for {strat.upper()} after suspension cooldown")
+            elif mult >= 0.8:
+                # If strategy multiplier was explicitly reset/healthy, clear suspension
+                self._strategy_suspended[strat] = False
+                self._suspended_until[strat] = None
+            else:
+                return (
+                    False,
+                    f"⛔ Strategy '{strat.upper()}' is SUSPENDED by win-rate gating (rolling win rate < 30%). "
+                    f"Waiting for recovery cooldown before reinstating.",
+                    20.0,
+                )
+
+        # ── 1. Loss Streak Circuit Breaker Check ─────────────────────────
+        cooldown_expiry = self._cooldown_until.get(strat)
+        if cooldown_expiry and datetime.now(timezone.utc) < cooldown_expiry:
+            remaining = (cooldown_expiry - datetime.now(timezone.utc)).total_seconds()
+            streak = self._consecutive_losses.get(strat, 0)
+            return (
+                False,
+                f"🚨 Loss Streak Cooldown: {strat.upper()} has {streak} consecutive losses. "
+                f"Cooldown active for {remaining:.0f}s more.",
+                15.0,
+            )
+
+        # ── 2. Strategy heavily penalized check ──────────────────────────
         penalty = 0.0
-        if mult < 0.65:
+        if mult < 0.55:
+            penalty = 10.0
+            hurdle = base_min_confluence + penalty
+            if confluence_score < hurdle:
+                return (
+                    False,
+                    f"Strategy '{strat.upper()}' is severely penalized ({mult:.2f}x). "
+                    f"Confluence {confluence_score:.1f} < required {hurdle:.1f} (+{penalty:.0f} hurdle).",
+                    penalty,
+                )
+        elif mult < 0.65:
             penalty = 6.0
             hurdle = base_min_confluence + penalty
             if confluence_score < hurdle:
                 return (
                     False,
-                    f"Strategy '{strat.upper()}' is penalized ({mult:.2f}x). Confluence {confluence_score:.1f} < required {hurdle:.1f} (+{penalty:.0f} hurdle).",
+                    f"Strategy '{strat.upper()}' is penalized ({mult:.2f}x). "
+                    f"Confluence {confluence_score:.1f} < required {hurdle:.1f} (+{penalty:.0f} hurdle).",
                     penalty,
                 )
 
-        # 2. Match against active mistake memories
+        # ── 3. Fuzzy Mistake Memory Matching ─────────────────────────────
         veto_threshold = base_min_confluence + 8.0
+        signal_regime_family = _regime_family(regime_val)
 
-        for m in reversed(self.mistake_memory[-15:]):
-            if m.get("strategy") == strat and m.get("direction") == direction and m.get("regime") == regime_val:
-                trap = m.get("trap_type", "similar mistake")
+        for m in reversed(self.mistake_memory[-20:]):
+            mem_strat = m.get("strategy", "")
+            mem_dir = m.get("direction", "")
+            mem_regime_family = _regime_family(m.get("regime_family") or m.get("regime", ""))
+            mem_trap = m.get("trap_type", "")
+
+            # Exact match: same strategy + direction + regime family
+            exact_match = (mem_strat == strat and mem_dir == direction and mem_regime_family == signal_regime_family)
+
+            # Fuzzy match: same direction + same trap type (across any strategy in same regime family)
+            fuzzy_match = (mem_dir == direction and mem_regime_family == signal_regime_family
+                           and mem_trap in ("counter_trend", "volatility_whipsaw", "streak_failure"))
+
+            if exact_match or fuzzy_match:
+                trap = mem_trap or "similar mistake"
                 rule = m.get("rule", "Defensive rule in effect.")
+                match_type = "EXACT" if exact_match else "FUZZY"
                 # Require higher conviction to break past a known mistake
                 if confluence_score < veto_threshold:
                     return (
                         False,
-                        f"🛡️ Mistake Guard Veto: Setup matches recent {trap} in {regime_val} (score {confluence_score:.1f} < required {veto_threshold:.1f}). Rule: {rule}",
+                        f"🛡️ Mistake Guard Veto ({match_type}): Setup matches recent '{trap}' in "
+                        f"{signal_regime_family} (score {confluence_score:.1f} < required {veto_threshold:.1f}). Rule: {rule}",
                         8.0,
                     )
 
@@ -335,13 +541,67 @@ class TradeLearner:
         """Get current normalized confluence component weights."""
         return dict(self.component_weights)
 
+    def is_strategy_suspended(self, strategy_name: str) -> bool:
+        """Check if a strategy is currently suspended by win-rate gating."""
+        strat = strategy_name.lower()
+        if self._strategy_suspended.get(strat, False):
+            susp_until = self._suspended_until.get(strat)
+            if susp_until and datetime.now(timezone.utc) >= susp_until:
+                self._strategy_suspended[strat] = False
+                self._suspended_until[strat] = None
+                return False
+            if self.strategy_multipliers.get(strat, 1.0) >= 0.8:
+                self._strategy_suspended[strat] = False
+                self._suspended_until[strat] = None
+                return False
+            return True
+        return False
+
+    def reset_adaptive_state(self):
+        """Reset all runtime adaptive weights, streaks, outcomes, and suspensions to clean defaults."""
+        self.strategy_multipliers = {"scalping": 1.0, "day_trading": 1.0, "swing_trading": 1.0}
+        self.component_weights = {
+            "technical": 40.0,
+            "ai_prediction": 25.0,
+            "sentiment": 20.0,
+            "regime": 15.0,
+        }
+        self.mistake_memory.clear()
+        for s in list(self._rolling_outcomes.keys()):
+            self._consecutive_losses[s] = 0
+            self._cooldown_until[s] = None
+            self._strategy_suspended[s] = False
+            self._suspended_until[s] = None
+            self._rolling_outcomes[s].clear()
+
+    def get_consecutive_losses(self, strategy_name: str) -> int:
+        """Get consecutive loss count for a strategy."""
+        return self._consecutive_losses.get(strategy_name.lower(), 0)
+
     def get_learning_metrics(self) -> dict:
         """Expose self-learning metrics for Web Dashboard and Telegram."""
         recent = crud.get_recent_lessons(limit=5)
+
+        # Calculate rolling win rates
+        rolling_win_rates = {}
+        for strat, outcomes in self._rolling_outcomes.items():
+            if len(outcomes) > 0:
+                wins = sum(1 for o in outcomes if o == "WIN")
+                rolling_win_rates[strat] = round(wins / len(outcomes) * 100, 1)
+            else:
+                rolling_win_rates[strat] = None
+
         return {
             "adaptive_weights": dict(self.component_weights),
             "strategy_multipliers": dict(self.strategy_multipliers),
             "active_mistakes_memorized": len(self.mistake_memory),
+            "consecutive_losses": dict(self._consecutive_losses),
+            "strategy_suspended": dict(self._strategy_suspended),
+            "rolling_win_rates": rolling_win_rates,
+            "cooldowns_active": {
+                s: self._cooldown_until[s].isoformat() if self._cooldown_until.get(s) else None
+                for s in self._cooldown_until
+            },
             "recent_lessons": [
                 {
                     "ticket": l.ticket,

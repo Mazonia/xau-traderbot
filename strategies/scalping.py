@@ -1,9 +1,10 @@
 """
-Scalping Strategy (M1-M5)
+Scalping Strategy (M1-M5) — v2 Oct 2026
 
 Fast-paced, short-term trades during high-volatility sessions.
 
 Entry Logic:
+- H1 higher-timeframe trend confirmation gate (MUST align)
 - Price above/below 200 EMA (trend filter)
 - Pullback to 30/60 EMA zone
 - MACD crossover confirms momentum
@@ -15,6 +16,8 @@ Exit Logic:
 - TP: 1.5:1 risk-reward ratio
 - Active during: London + NY overlap (highest XAUUSD volatility)
 """
+
+from datetime import datetime, timezone
 
 import pandas as pd
 from loguru import logger
@@ -47,8 +50,8 @@ class ScalpingStrategy(BaseStrategy):
         self.rr_ratio = params.get("risk_reward_ratio", 1.5)
         self.timeframes = params.get("timeframes", ["M5", "M1"])
 
-    def analyze(self, df: pd.DataFrame) -> dict:
-        """Analyze M5 data for scalping signals."""
+    def analyze(self, df: pd.DataFrame, higher_tf_df: pd.DataFrame | None = None) -> dict:
+        """Analyze M5 data for scalping signals with H1 confirmation gate."""
         ta = TechnicalAnalyzer()
 
         # Ensure indicators are calculated
@@ -66,6 +69,24 @@ class ScalpingStrategy(BaseStrategy):
 
         # Trend direction from 200 EMA
         trend = "BULLISH" if current_price > ema_trend_val else "BEARISH"
+
+        # ── Higher-TF Trend Confirmation (H1) ────────────────────────────
+        htf_trend = "NEUTRAL"
+        htf_aligned_buy = True
+        htf_aligned_sell = True
+        if higher_tf_df is not None and len(higher_tf_df) > 50:
+            htf_df = ta.add_ema(higher_tf_df.copy(), [50, 200])
+            htf_price = float(htf_df["close"].iloc[-1])
+            htf_ema50 = float(htf_df["ema_50"].iloc[-1]) if "ema_50" in htf_df.columns else htf_price
+            htf_ema200 = float(htf_df["ema_200"].iloc[-1]) if "ema_200" in htf_df.columns else htf_price
+            if htf_price > htf_ema50 > htf_ema200:
+                htf_trend = "BULLISH"
+                htf_aligned_sell = False  # H1 bullish → selling blocked
+            elif htf_price < htf_ema50 < htf_ema200:
+                htf_trend = "BEARISH"
+                htf_aligned_buy = False  # H1 bearish → buying blocked
+            else:
+                htf_trend = "NEUTRAL"  # H1 neutral → both directions allowed
 
         # Pullback detection: price near fast/slow EMA zone
         dist_fast = abs(current_price - ema_fast_val) / current_price * 100
@@ -89,9 +110,19 @@ class ScalpingStrategy(BaseStrategy):
         # ATR for SL/TP
         atr = float(df["atr"].iloc[-1]) if "atr" in df.columns and not pd.isna(df["atr"].iloc[-1]) else 1.0
 
+        # Volume intensity for confluence bonus
+        volume_intensity = 1.0
+        if "volume" in df.columns:
+            vol_sma = df["volume"].rolling(20).mean()
+            if not vol_sma.isna().iloc[-1] and vol_sma.iloc[-1] > 0:
+                volume_intensity = float(df["volume"].iloc[-1] / vol_sma.iloc[-1])
+
         return {
             "current_price": current_price,
             "trend": trend,
+            "htf_trend": htf_trend,
+            "htf_aligned_buy": htf_aligned_buy,
+            "htf_aligned_sell": htf_aligned_sell,
             "is_in_pullback": is_in_pullback,
             "pullback_distance_pct": pullback_zone,
             "ema_crossover": ema_cross,
@@ -102,6 +133,7 @@ class ScalpingStrategy(BaseStrategy):
             "ema_trend_value": ema_trend_val,
             "ema_fast_value": ema_fast_val,
             "ema_slow_value": ema_slow_val,
+            "volume_intensity": volume_intensity,
         }
 
     def generate_signal(self, df: pd.DataFrame, analysis: dict) -> TradingSignal:
@@ -117,21 +149,44 @@ class ScalpingStrategy(BaseStrategy):
         patterns = analysis["candlestick_patterns"]
         in_pullback = analysis["is_in_pullback"]
 
+        # ── Higher-TF Gate Check ──────────────────────────────────────────
+        htf_aligned_buy = analysis.get("htf_aligned_buy", True)
+        htf_aligned_sell = analysis.get("htf_aligned_sell", True)
+        htf_trend = analysis.get("htf_trend", "NEUTRAL")
+
+        # ── Dead Asian Hours / Low Volume Shield ──────────────────────────
+        vol_intensity = analysis.get("volume_intensity", 1.0)
+        now_hour = datetime.now(timezone.utc).hour
+        is_asian_dead_hours = (now_hour >= 21 or now_hour < 7)
+        if is_asian_dead_hours and vol_intensity < 1.0:
+            reasons.append(
+                f"🚫 Asian Dead Zone: Low volume chop ({vol_intensity:.1f}x avg) — scalping entry blocked"
+            )
+            htf_aligned_buy = False
+            htf_aligned_sell = False
+
         # ── BULLISH SETUP ────────────────────────────────────────────────
         bullish_score = 0
 
+        # 0. HTF Gate: H1 must not be bearish for BUY entries
+        if not htf_aligned_buy:
+            reasons.append(f"🚫 HTF GATE: H1 trend is {htf_trend} — BUY blocked")
+            bullish_score = 0  # Force zero — cannot buy against H1
+        else:
+            pass  # Continue scoring
+
         # 1. Trend filter: Price above 200 EMA (+15)
-        if trend == "BULLISH":
+        if htf_aligned_buy and trend == "BULLISH":
             bullish_score += 15
             reasons.append("✅ Price above 200 EMA (bullish trend)")
 
         # 2. Pullback to EMA zone (+15)
-        if in_pullback and trend == "BULLISH":
+        if htf_aligned_buy and in_pullback and trend == "BULLISH":
             bullish_score += 15
             reasons.append(f"✅ Pullback to EMA zone ({analysis['pullback_distance_pct']:.2f}%)")
 
         # 3. MACD bullish crossover (+20)
-        if macd["crossover"] == "BULLISH":
+        if htf_aligned_buy and macd["crossover"] == "BULLISH":
             bullish_score += 20
             if macd["just_crossed"]:
                 bullish_score += 5  # Bonus for fresh cross
@@ -140,7 +195,7 @@ class ScalpingStrategy(BaseStrategy):
                 reasons.append("✅ MACD bullish momentum")
 
         # 4. RSI above 50 (+15)
-        if rsi["above_50"] and rsi["zone"] != "OVERBOUGHT":
+        if htf_aligned_buy and rsi["above_50"] and rsi["zone"] != "OVERBOUGHT":
             bullish_score += 15
             reasons.append(f"✅ RSI at {rsi['value']:.1f} (above 50, not overbought)")
 
@@ -158,15 +213,20 @@ class ScalpingStrategy(BaseStrategy):
         # ── BEARISH SETUP ────────────────────────────────────────────────
         bearish_score = 0
 
-        if trend == "BEARISH":
+        # 0. HTF Gate: H1 must not be bullish for SELL entries
+        if not htf_aligned_sell:
+            reasons.append(f"🚫 HTF GATE: H1 trend is {htf_trend} — SELL blocked")
+            bearish_score = 0
+
+        if htf_aligned_sell and trend == "BEARISH":
             bearish_score += 15
             reasons.append("✅ Price below 200 EMA (bearish trend)")
 
-        if in_pullback and trend == "BEARISH":
+        if htf_aligned_sell and in_pullback and trend == "BEARISH":
             bearish_score += 15
             reasons.append(f"✅ Pullback to EMA zone ({analysis['pullback_distance_pct']:.2f}%)")
 
-        if macd["crossover"] == "BEARISH":
+        if htf_aligned_sell and macd["crossover"] == "BEARISH":
             bearish_score += 20
             if macd["just_crossed"]:
                 bearish_score += 5
@@ -174,7 +234,7 @@ class ScalpingStrategy(BaseStrategy):
             else:
                 reasons.append("✅ MACD bearish momentum")
 
-        if not rsi["above_50"] and rsi["zone"] != "OVERSOLD":
+        if htf_aligned_sell and not rsi["above_50"] and rsi["zone"] != "OVERSOLD":
             bearish_score += 15
             reasons.append(f"✅ RSI at {rsi['value']:.1f} (below 50, not oversold)")
 

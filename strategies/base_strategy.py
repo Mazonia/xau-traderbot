@@ -195,11 +195,11 @@ class BaseStrategy(ABC):
         """
         pass
 
-    def run(self, df: pd.DataFrame) -> TradingSignal:
+    def run(self, df: pd.DataFrame, higher_tf_df: Optional[pd.DataFrame] = None) -> TradingSignal:
         """
         Full strategy pipeline: analyze → generate signal.
 
-        This is the main entry point called by the bot.
+        This is the main entry point called by the bot and backtester.
         """
         if not self.enabled:
             return TradingSignal(
@@ -209,7 +209,7 @@ class BaseStrategy(ABC):
                 reasons=["Strategy is disabled"],
             )
 
-        if len(df) < 200:  # Need enough data for indicators
+        if len(df) < 50:  # Need enough data for indicators
             return TradingSignal(
                 direction=SignalDirection.HOLD,
                 strategy=self.name,
@@ -217,7 +217,11 @@ class BaseStrategy(ABC):
                 reasons=["Insufficient data for analysis"],
             )
 
-        analysis = self.analyze(df)
+        try:
+            analysis = self.analyze(df, higher_tf_df=higher_tf_df)
+        except TypeError:
+            analysis = self.analyze(df)
+
         signal = self.generate_signal(df, analysis)
         self._last_signal = signal
         return signal

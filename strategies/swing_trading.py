@@ -47,8 +47,8 @@ class SwingTradingStrategy(BaseStrategy):
         self.rr_ratio = params.get("risk_reward_ratio", 3.0)
         self.timeframes = params.get("timeframes", ["D1", "H4"])
 
-    def analyze(self, df: pd.DataFrame) -> dict:
-        """Analyze H4/D1 data for swing trading opportunities."""
+    def analyze(self, df: pd.DataFrame, higher_tf_df: pd.DataFrame | None = None) -> dict:
+        """Analyze H4/D1 data for swing trading opportunities with D1 macro confirmation."""
         ta = TechnicalAnalyzer()
 
         ema_periods = [self.ema_fast, self.ema_slow, self.ema_trend]
@@ -110,10 +110,39 @@ class SwingTradingStrategy(BaseStrategy):
         # ADX
         adx = float(df["adx"].iloc[-1]) if "adx" in df.columns and not pd.isna(df["adx"].iloc[-1]) else 0
 
+        # ── Higher-TF Trend Confirmation (D1) ────────────────────────────
+        htf_trend = "NEUTRAL"
+        htf_aligned_buy = True
+        htf_aligned_sell = True
+        if higher_tf_df is not None and len(higher_tf_df) > 50:
+            htf_df = ta.add_ema(higher_tf_df.copy(), [50, 200])
+            htf_price = float(htf_df["close"].iloc[-1])
+            htf_ema50 = float(htf_df["ema_50"].iloc[-1]) if "ema_50" in htf_df.columns else htf_price
+            htf_ema200 = float(htf_df["ema_200"].iloc[-1]) if "ema_200" in htf_df.columns else htf_price
+            if htf_price > htf_ema50 > htf_ema200:
+                htf_trend = "BULLISH"
+                htf_aligned_sell = False  # D1 bullish → swing shorting blocked
+            elif htf_price < htf_ema50 < htf_ema200:
+                htf_trend = "BEARISH"
+                htf_aligned_buy = False  # D1 bearish → swing buying blocked
+            else:
+                htf_trend = "NEUTRAL"
+
+        # Volume intensity for confluence bonus
+        volume_intensity = 1.0
+        if "volume" in df.columns:
+            vol_sma = df["volume"].rolling(20).mean()
+            if not vol_sma.isna().iloc[-1] and vol_sma.iloc[-1] > 0:
+                volume_intensity = float(df["volume"].iloc[-1] / vol_sma.iloc[-1])
+
         return {
             "current_price": current_price,
             "bullish_trend": bullish_trend,
             "bearish_trend": bearish_trend,
+            "htf_trend": htf_trend,
+            "htf_aligned_buy": htf_aligned_buy,
+            "htf_aligned_sell": htf_aligned_sell,
+            "volume_intensity": volume_intensity,
             "is_pullback": is_pullback,
             "pullback_distance_pct": pullback_to_ema,
             "near_support": near_support,
@@ -139,18 +168,28 @@ class SwingTradingStrategy(BaseStrategy):
         macd = analysis["macd_crossover"]
         patterns = analysis["candlestick_patterns"]
 
+        # ── Higher-TF Gate Check ──────────────────────────────────────────
+        htf_aligned_buy = analysis.get("htf_aligned_buy", True)
+        htf_aligned_sell = analysis.get("htf_aligned_sell", True)
+        htf_trend = analysis.get("htf_trend", "NEUTRAL")
+
         # ── BULLISH SWING ────────────────────────────────────────────────
         bullish_score = 0
 
-        # 1. Established uptrend (+20)
-        if analysis["bullish_trend"]:
-            bullish_score += 20
-            reasons.append("✅ Established bullish trend (price > 200 EMA, 20 > 50)")
+        # 0. HTF Gate: D1 must not be bearish for BUY swing entries
+        if not htf_aligned_buy:
+            reasons.append(f"🚫 HTF GATE: D1 trend is {htf_trend} — BUY swing blocked")
+            bullish_score = 0
+        else:
+            # 1. Established uptrend (+20)
+            if analysis["bullish_trend"]:
+                bullish_score += 20
+                reasons.append("✅ Established bullish trend (price > 200 EMA, 20 > 50)")
 
-        # 2. Pullback to 50 EMA (+20) — KEY entry criteria
-        if analysis["is_pullback"] and analysis["bullish_trend"]:
-            bullish_score += 20
-            reasons.append(f"✅ Pullback to 50 EMA zone ({analysis['pullback_distance_pct']:.2f}%)")
+            # 2. Pullback to 50 EMA (+20) — KEY entry criteria
+            if analysis["is_pullback"] and analysis["bullish_trend"]:
+                bullish_score += 20
+                reasons.append(f"✅ Pullback to 50 EMA zone ({analysis['pullback_distance_pct']:.2f}%)")
 
         # 3. Price near support level (+15)
         if analysis["near_support"]:
@@ -184,13 +223,18 @@ class SwingTradingStrategy(BaseStrategy):
         # ── BEARISH SWING ────────────────────────────────────────────────
         bearish_score = 0
 
-        if analysis["bearish_trend"]:
-            bearish_score += 20
-            reasons.append("✅ Established bearish trend (price < 200 EMA, 20 < 50)")
+        # 0. HTF Gate: D1 must not be bullish for SELL swing entries
+        if not htf_aligned_sell:
+            reasons.append(f"🚫 HTF GATE: D1 trend is {htf_trend} — SELL swing blocked")
+            bearish_score = 0
+        else:
+            if analysis["bearish_trend"]:
+                bearish_score += 20
+                reasons.append("✅ Established bearish trend (price < 200 EMA, 20 < 50)")
 
-        if analysis["is_pullback"] and analysis["bearish_trend"]:
-            bearish_score += 20
-            reasons.append(f"✅ Pullback to 50 EMA zone ({analysis['pullback_distance_pct']:.2f}%)")
+            if analysis["is_pullback"] and analysis["bearish_trend"]:
+                bearish_score += 20
+                reasons.append(f"✅ Pullback to 50 EMA zone ({analysis['pullback_distance_pct']:.2f}%)")
 
         if analysis["near_resistance"]:
             bearish_score += 15

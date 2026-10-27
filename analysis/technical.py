@@ -500,6 +500,13 @@ class TechnicalAnalyzer:
         Create a comprehensive feature set for ML models.
         Adds all indicators + derived features.
         """
+        # Ensure volume column exists (from tick_volume if raw MT5 dataframe)
+        if "volume" not in df.columns:
+            if "tick_volume" in df.columns:
+                df["volume"] = df["tick_volume"]
+            else:
+                df["volume"] = 1.0
+
         # Add all base indicators
         df = cls.add_all_indicators(df)
 

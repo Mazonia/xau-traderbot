@@ -1,10 +1,11 @@
 """
-Day Trading Strategy (M15-H1)
+Day Trading Strategy (M15-H1) — v2 Oct 2026
 
 Medium-term intraday trades using multi-timeframe EMA alignment,
 MACD momentum, RSI divergence, and Bollinger Band positioning.
 
 Entry Logic:
+- H4 higher-timeframe trend confirmation gate (MUST align)
 - Multi-TF EMA alignment (H1 trend + M15 entry)
 - MACD histogram growing in trend direction
 - RSI between 40-60 (not overextended) or divergence present
@@ -48,8 +49,8 @@ class DayTradingStrategy(BaseStrategy):
         self.rr_ratio = params.get("risk_reward_ratio", 2.0)
         self.timeframes = params.get("timeframes", ["H1", "M15"])
 
-    def analyze(self, df: pd.DataFrame) -> dict:
-        """Analyze H1 data for day trading signals."""
+    def analyze(self, df: pd.DataFrame, higher_tf_df: pd.DataFrame | None = None) -> dict:
+        """Analyze H1 data for day trading signals with H4 confirmation gate."""
         ta = TechnicalAnalyzer()
 
         # Calculate indicators
@@ -102,10 +103,39 @@ class DayTradingStrategy(BaseStrategy):
         # Support/Resistance
         sr_levels = ta.find_support_resistance(df)
 
+        # ── Higher-TF Trend Confirmation (H4) ────────────────────────────
+        htf_trend = "NEUTRAL"
+        htf_aligned_buy = True
+        htf_aligned_sell = True
+        if higher_tf_df is not None and len(higher_tf_df) > 50:
+            htf_df = ta.add_ema(higher_tf_df.copy(), [50, 200])
+            htf_df = ta.add_adx(htf_df)
+            htf_price = float(htf_df["close"].iloc[-1])
+            htf_ema50 = float(htf_df["ema_50"].iloc[-1]) if "ema_50" in htf_df.columns else htf_price
+            htf_ema200 = float(htf_df["ema_200"].iloc[-1]) if "ema_200" in htf_df.columns else htf_price
+            if htf_price > htf_ema50 > htf_ema200:
+                htf_trend = "BULLISH"
+                htf_aligned_sell = False  # H4 bullish → selling blocked
+            elif htf_price < htf_ema50 < htf_ema200:
+                htf_trend = "BEARISH"
+                htf_aligned_buy = False  # H4 bearish → buying blocked
+            else:
+                htf_trend = "NEUTRAL"  # H4 neutral → both directions allowed
+
+        # Volume intensity for confluence bonus
+        volume_intensity = 1.0
+        if "volume" in df.columns:
+            vol_sma = df["volume"].rolling(20).mean()
+            if not vol_sma.isna().iloc[-1] and vol_sma.iloc[-1] > 0:
+                volume_intensity = float(df["volume"].iloc[-1] / vol_sma.iloc[-1])
+
         return {
             "current_price": current_price,
             "bullish_ema_alignment": bullish_alignment,
             "bearish_ema_alignment": bearish_alignment,
+            "htf_trend": htf_trend,
+            "htf_aligned_buy": htf_aligned_buy,
+            "htf_aligned_sell": htf_aligned_sell,
             "macd_histogram": macd_hist,
             "macd_growing": macd_growing,
             "macd_crossover": macd_cross,
@@ -117,6 +147,7 @@ class DayTradingStrategy(BaseStrategy):
             "di_plus": di_plus,
             "di_minus": di_minus,
             "support_resistance": sr_levels,
+            "volume_intensity": volume_intensity,
         }
 
     def generate_signal(self, df: pd.DataFrame, analysis: dict) -> TradingSignal:
@@ -130,88 +161,100 @@ class DayTradingStrategy(BaseStrategy):
         patterns = analysis["candlestick_patterns"]
         bb_pctb = analysis["bb_pctb"]
 
+        # ── Higher-TF Gate Check ──────────────────────────────────────────
+        htf_aligned_buy = analysis.get("htf_aligned_buy", True)
+        htf_aligned_sell = analysis.get("htf_aligned_sell", True)
+        htf_trend = analysis.get("htf_trend", "NEUTRAL")
+
         # ── BULLISH SETUP ────────────────────────────────────────────────
         bullish_score = 0
 
-        # 1. Full EMA alignment (+20)
-        if analysis["bullish_ema_alignment"]:
-            bullish_score += 20
-            reasons.append("✅ Full bullish EMA alignment (20 > 50 > 200)")
+        # 0. HTF Gate: H4 must not be bearish for BUY entries
+        if not htf_aligned_buy:
+            reasons.append(f"🚫 HTF GATE: H4 trend is {htf_trend} — BUY blocked")
+        else:
+            # 1. Full EMA alignment (+20)
+            if analysis["bullish_ema_alignment"]:
+                bullish_score += 20
+                reasons.append("✅ Full bullish EMA alignment (20 > 50 > 200)")
 
-        # 2. MACD bullish + growing histogram (+20)
-        if macd["crossover"] == "BULLISH":
-            bullish_score += 15
-            reasons.append("✅ MACD bullish")
-        if analysis["macd_growing"] and analysis["macd_histogram"] > 0:
-            bullish_score += 5
-            reasons.append("✅ MACD histogram growing (strengthening momentum)")
+            # 2. MACD bullish + growing histogram (+20)
+            if macd["crossover"] == "BULLISH":
+                bullish_score += 15
+                reasons.append("✅ MACD bullish")
+            if analysis["macd_growing"] and analysis["macd_histogram"] > 0:
+                bullish_score += 5
+                reasons.append("✅ MACD histogram growing (strengthening momentum)")
 
-        # 3. RSI in favorable zone (+15)
-        if 40 <= rsi["value"] <= 65:
-            bullish_score += 15
-            reasons.append(f"✅ RSI at {rsi['value']:.1f} (favorable zone)")
-        elif rsi["divergence"] == "BULLISH":
-            bullish_score += 20
-            reasons.append("✅ Bullish RSI divergence — high conviction")
+            # 3. RSI in favorable zone (+15)
+            if 40 <= rsi["value"] <= 65:
+                bullish_score += 15
+                reasons.append(f"✅ RSI at {rsi['value']:.1f} (favorable zone)")
+            elif rsi["divergence"] == "BULLISH":
+                bullish_score += 20
+                reasons.append("✅ Bullish RSI divergence — high conviction")
 
-        # 4. Bollinger Band position: price near lower band = buy opportunity (+10 only in ranging or with RSI divergence)
-        if bb_pctb < 0.3:
-            if analysis["adx"] < 25 or rsi["divergence"] == "BULLISH":
+            # 4. Bollinger Band position: price near lower band = buy opportunity (+10 only in ranging or with RSI divergence)
+            if bb_pctb < 0.3:
+                if analysis["adx"] < 25 or rsi["divergence"] == "BULLISH":
+                    bullish_score += 10
+                    reasons.append(f"✅ Price near lower Bollinger Band (%B={bb_pctb:.2f})")
+                else:
+                    reasons.append(f"⚠️ Lower Bollinger Band in trending market (%B={bb_pctb:.2f}) — avoiding falling knife")
+
+            # 5. ADX confirms trend strength in bullish direction (+DI > -DI) (+10)
+            if analysis["adx"] > 25 and analysis.get("di_plus", 0) > analysis.get("di_minus", 0):
                 bullish_score += 10
-                reasons.append(f"✅ Price near lower Bollinger Band (%B={bb_pctb:.2f})")
-            else:
-                reasons.append(f"⚠️ Lower Bollinger Band in trending market (%B={bb_pctb:.2f}) — avoiding falling knife")
+                reasons.append(f"✅ ADX {analysis['adx']:.1f} (+DI > -DI) confirms bullish trend")
 
-        # 5. ADX confirms trend strength in bullish direction (+DI > -DI) (+10)
-        if analysis["adx"] > 25 and analysis.get("di_plus", 0) > analysis.get("di_minus", 0):
-            bullish_score += 10
-            reasons.append(f"✅ ADX {analysis['adx']:.1f} (+DI > -DI) confirms bullish trend")
-
-        # 6. Candlestick confirmation (+5)
-        bullish_patterns = [p for p in patterns if p["direction"] == "BULLISH"]
-        if bullish_patterns:
-            bullish_score += 5
-            reasons.append(f"✅ {bullish_patterns[0]['name']}")
+            # 6. Candlestick confirmation (+5)
+            bullish_patterns = [p for p in patterns if p["direction"] == "BULLISH"]
+            if bullish_patterns:
+                bullish_score += 5
+                reasons.append(f"✅ {bullish_patterns[0]['name']}")
 
         # ── BEARISH SETUP ────────────────────────────────────────────────
         bearish_score = 0
 
-        if analysis["bearish_ema_alignment"]:
-            bearish_score += 20
-            reasons.append("✅ Full bearish EMA alignment (20 < 50 < 200)")
+        # 0. HTF Gate: H4 must not be bullish for SELL entries
+        if not htf_aligned_sell:
+            reasons.append(f"🚫 HTF GATE: H4 trend is {htf_trend} — SELL blocked")
+        else:
+            if analysis["bearish_ema_alignment"]:
+                bearish_score += 20
+                reasons.append("✅ Full bearish EMA alignment (20 < 50 < 200)")
 
-        if macd["crossover"] == "BEARISH":
-            bearish_score += 15
-            reasons.append("✅ MACD bearish")
-        if analysis["macd_growing"] and analysis["macd_histogram"] < 0:
-            bearish_score += 5
-            reasons.append("✅ MACD histogram growing bearish")
+            if macd["crossover"] == "BEARISH":
+                bearish_score += 15
+                reasons.append("✅ MACD bearish")
+            if analysis["macd_growing"] and analysis["macd_histogram"] < 0:
+                bearish_score += 5
+                reasons.append("✅ MACD histogram growing bearish")
 
-        if 35 <= rsi["value"] <= 60:
-            bearish_score += 15
-            reasons.append(f"✅ RSI at {rsi['value']:.1f} (favorable for short)")
-        elif rsi["divergence"] == "BEARISH":
-            bearish_score += 20
-            reasons.append("✅ Bearish RSI divergence — high conviction")
+            if 35 <= rsi["value"] <= 60:
+                bearish_score += 15
+                reasons.append(f"✅ RSI at {rsi['value']:.1f} (favorable for short)")
+            elif rsi["divergence"] == "BEARISH":
+                bearish_score += 20
+                reasons.append("✅ Bearish RSI divergence — high conviction")
 
-        # 4. Bollinger Band position: price near upper band in ranging or with bearish divergence
-        if bb_pctb > 0.7:
-            if analysis["adx"] < 25 or rsi["divergence"] == "BEARISH":
+            # 4. Bollinger Band position: price near upper band in ranging or with bearish divergence
+            if bb_pctb > 0.7:
+                if analysis["adx"] < 25 or rsi["divergence"] == "BEARISH":
+                    bearish_score += 10
+                    reasons.append(f"✅ Price near upper Bollinger Band (%B={bb_pctb:.2f})")
+                else:
+                    reasons.append(f"⚠️ Upper Bollinger Band in trending market (%B={bb_pctb:.2f}) — avoiding strong momentum breakout")
+
+            # 5. ADX confirms trend strength in bearish direction (-DI > +DI) (+10)
+            if analysis["adx"] > 25 and analysis.get("di_minus", 0) > analysis.get("di_plus", 0):
                 bearish_score += 10
-                reasons.append(f"✅ Price near upper Bollinger Band (%B={bb_pctb:.2f})")
-            else:
-                reasons.append(f"⚠️ Upper Bollinger Band in trending market (%B={bb_pctb:.2f}) — avoiding strong momentum breakout")
+                reasons.append(f"✅ ADX {analysis['adx']:.1f} (-DI > +DI) confirms bearish trend")
 
-        # 5. ADX confirms trend strength in bearish direction (-DI > +DI) (+10)
-        if analysis["adx"] > 25 and analysis.get("di_minus", 0) > analysis.get("di_plus", 0):
-            bearish_score += 10
-            reasons.append(f"✅ ADX {analysis['adx']:.1f} (-DI > +DI) confirms bearish trend")
-
-        bearish_patterns = [p for p in patterns if p["direction"] == "BEARISH"]
-        if bearish_patterns:
-            bearish_score += 5
-            reasons.append(f"✅ {bearish_patterns[0]['name']}")
-
+            bearish_patterns = [p for p in patterns if p["direction"] == "BEARISH"]
+            if bearish_patterns:
+                bearish_score += 5
+                reasons.append(f"✅ {bearish_patterns[0]['name']}")
         # ── Determine Direction ──────────────────────────────────────────
         min_tech = self.min_technical_score
         if bullish_score > bearish_score and bullish_score >= min_tech:

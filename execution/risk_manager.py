@@ -1,5 +1,5 @@
 """
-Risk Manager — Position Sizing & Safety Controls
+Risk Manager — Position Sizing & Safety Controls (v2 — Oct 2026)
 
 Enforces:
 - Max risk per trade (2-5% of account)
@@ -8,6 +8,8 @@ Enforces:
 - Minimum free margin
 - Spread filter
 - Correlation checks
+- Account drawdown scaling (equity vs peak balance)
+- Strategy suspension integration (win-rate gating & loss-streak cooldowns)
 """
 
 from datetime import datetime, timezone
@@ -28,8 +30,9 @@ class RiskManager:
     Every trade must pass through the risk manager before being placed.
     """
 
-    def __init__(self, mt5: MT5Connector):
+    def __init__(self, mt5: MT5Connector, trade_learner: Optional[Any] = None):
         self.mt5 = mt5
+        self.trade_learner = trade_learner
         self._last_active_mode: Optional[str] = get_settings().active_mode
         self._max_risk_pct_override: Optional[float] = None
         self._default_lot_override: Optional[float] = None
@@ -41,6 +44,10 @@ class RiskManager:
         self._global_last_trade_time: Optional[datetime] = None
         self.min_cooldown_seconds: int = 120  # 2 minutes global cooldown between trades
         self.strategy_cooldown_seconds: int = 300  # 5 minutes per-strategy cooldown
+
+        # ── Account Drawdown Scaling ─────────────────────────────────────
+        self._peak_balance: float = 0.0
+        self._drawdown_suspend = False
 
     def _check_mode_sync(self):
         """Ensure overrides are reset if the trading mode changes."""
@@ -237,6 +244,42 @@ class RiskManager:
         if not account.get("trade_allowed", True):
             return False, "Trading not allowed on this account"
 
+        # ── 7. Account Drawdown Scaling ────────────────────────────────
+        equity = float(account.get("equity", balance))
+        if balance > self._peak_balance:
+            self._peak_balance = balance
+        
+        if self._peak_balance > 0:
+            drawdown_pct = ((self._peak_balance - equity) / self._peak_balance) * 100
+            if drawdown_pct >= 10.0:
+                self._drawdown_suspend = True
+                logger.critical(
+                    f"⛔ DRAWDOWN SUSPEND: Equity ${equity:.2f} is {drawdown_pct:.1f}% below "
+                    f"peak ${self._peak_balance:.2f} — ALL new entries suspended"
+                )
+                return False, f"Account drawdown {drawdown_pct:.1f}% exceeds 10% threshold — trading suspended"
+            elif drawdown_pct >= 5.0:
+                logger.warning(
+                    f"⚠️ DRAWDOWN WARNING: Equity ${equity:.2f} is {drawdown_pct:.1f}% below "
+                    f"peak ${self._peak_balance:.2f} — position sizes will be halved"
+                )
+                # Don't block, but the drawdown_modifier will reduce size in calculate_lot_size
+            else:
+                self._drawdown_suspend = False
+
+        # ── 8. Strategy Suspension Check (Win-Rate Gating & Loss-Streak Cooldowns) ──
+        if strategy and self.trade_learner is not None:
+            try:
+                if self.trade_learner.is_strategy_suspended(strategy):
+                    return False, f"Strategy '{strategy}' is SUSPENDED by win-rate gating (rolling win rate < 30%)"
+            except Exception:
+                pass
+
+        # ── 9. Market Rollover Shield (21:00-22:00 UTC) ───────────────────
+        now_hour = datetime.now(timezone.utc).hour
+        if now_hour == 21:
+            return False, "Market rollover hour (21:00-22:00 UTC) — entries paused due to spread blowout risk"
+
         return True, "All risk checks passed"
 
     def calculate_lot_size(
@@ -271,6 +314,16 @@ class RiskManager:
         # Risk amount in account currency
         risk_amount = balance * (self.max_risk_pct / 100) * risk_modifier
 
+        # ── Account Drawdown Scaling ────────────────────────────────
+        equity = float(account.get("equity", balance))
+        drawdown_modifier = 1.0
+        if self._peak_balance > 0:
+            dd_pct = ((self._peak_balance - equity) / self._peak_balance) * 100
+            if dd_pct >= 5.0:
+                drawdown_modifier = 0.5  # Halve position sizes at 5%+ drawdown
+                logger.info(f"Drawdown scaling active: {dd_pct:.1f}% drawdown → 50% position size reduction")
+        risk_amount *= drawdown_modifier
+
         # SL distance in price
         sl_distance = abs(entry_price - stop_loss)
         if sl_distance == 0:
@@ -298,9 +351,13 @@ class RiskManager:
         lot_size = risk_amount / (sl_pips * pip_value_per_lot)
 
         # Apply constraints
+        effective_max_lot = self.max_lot
+        if drawdown_modifier < 1.0:
+            effective_max_lot = max(volume_min, round(self.max_lot * drawdown_modifier, 2))
+
         lot_size = max(volume_min, lot_size)
         lot_size = min(volume_max, lot_size)
-        lot_size = min(self.max_lot, lot_size)
+        lot_size = min(effective_max_lot, lot_size)
 
         # Round to volume step
         lot_size = round(lot_size / volume_step) * volume_step

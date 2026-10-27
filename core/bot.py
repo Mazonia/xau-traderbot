@@ -85,6 +85,7 @@ class TradingBot:
         self.attention_scorer = AttentionMarketScorer(window=25)
         from ai.trade_learner import trade_learner
         self.trade_learner = trade_learner
+        self.risk_manager.trade_learner = self.trade_learner
 
         # ── News & Macro ─────────────────────────────────────────────────
         self.news_fetcher = NewsFetcher()
@@ -233,6 +234,8 @@ class TradingBot:
             interval_hours=12
         )
         self.scheduler.start()
+        # Fetch initial economic calendar immediately so protection is active from cycle 1
+        asyncio.create_task(self.economic_events.fetch_upcoming_events())
 
         # Register shutdown handlers
         self._running = True
@@ -316,8 +319,33 @@ class TradingBot:
                 if getattr(self, "_trading_paused", False) or imminent:
                     best_signal = None
                 else:
+                    now_utc = datetime.now(timezone.utc)
+                    now_hour = now_utc.hour
+
+                    # Rollover dead zone shield: 21:00-22:00 UTC (spread blowout risk)
+                    if now_hour == 21:
+                        if self._cycle_count % 20 == 0:
+                            logger.info("⏸️ Daily Rollover Hour (21:00-22:00 UTC) — market spread blowout shield active")
+                        continue
+
+                    # Determine active sessions for current UTC time
+                    active_current_sessions = []
+                    if 0 <= now_hour < 8:
+                        active_current_sessions.append("asian")
+                    if 8 <= now_hour < 16:
+                        active_current_sessions.append("london")
+                    if 13 <= now_hour < 21:
+                        active_current_sessions.append("new_york")
+                    if 13 <= now_hour < 16:
+                        active_current_sessions.append("london_ny_overlap")
+
                     for strategy_name, strategy in self.strategies.items():
                         if not strategy.enabled:
+                            continue
+
+                        # Active session filter for strategy
+                        allowed_sessions = getattr(strategy, "active_sessions", [])
+                        if allowed_sessions and not any(s in active_current_sessions for s in allowed_sessions):
                             continue
 
                         # Check if regime recommends this strategy
@@ -326,18 +354,27 @@ class TradingBot:
                         ):
                             continue
 
-                        # Select appropriate dataframe for the strategy
+                        # Select appropriate dataframe + higher-TF for the strategy
                         if strategy_name == "scalping" and df_m5 is not None:
                             df = df_m5.copy()
+                            higher_tf = df_h1.copy() if df_h1 is not None else None
                         elif strategy_name == "day_trading":
                             df = df_h1.copy()
+                            higher_tf = df_h4.copy() if df_h4 is not None else None
                         elif strategy_name == "swing_trading" and df_h4 is not None:
                             df = df_h4.copy()
+                            higher_tf = df_d1.copy() if df_d1 is not None else None
                         else:
                             continue
 
-                        # Run strategy
-                        signal = strategy.run(df)
+                        # Run strategy with multi-TF confirmation
+                        try:
+                            analysis = strategy.analyze(df, higher_tf_df=higher_tf)
+                            signal = strategy.generate_signal(df, analysis)
+                            strategy._last_signal = signal
+                        except TypeError:
+                            # Fallback for strategies that don't accept higher_tf_df yet
+                            signal = strategy.run(df)
 
                         if not signal.is_actionable:
                             continue

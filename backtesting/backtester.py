@@ -39,6 +39,7 @@ class Backtester:
         slippage_points: float = 0.05,
         min_confluence_score: float = 65.0,
         trailing_stop_enabled: bool = True,
+        classifier: Optional[Any] = None,
     ):
         self.initial_balance = initial_balance
         self.lot_size = lot_size
@@ -46,6 +47,7 @@ class Backtester:
         self.slippage = slippage_points
         self.min_confluence = min_confluence_score
         self.trailing_enabled = trailing_stop_enabled
+        self.classifier = classifier
 
         self.ta = TechnicalAnalyzer()
         self.regime_detector = RegimeDetector()
@@ -106,7 +108,7 @@ class Backtester:
         })
         return df
 
-    def run(self, df: pd.DataFrame, warmup_bars: int = 200) -> PerformanceMetrics:
+    def run(self, df: pd.DataFrame, higher_tf_df: Optional[pd.DataFrame] = None, warmup_bars: int = 200) -> PerformanceMetrics:
         """
         Run the backtest across historical bars.
         """
@@ -224,22 +226,41 @@ class Backtester:
                 best_signal = None
                 best_confluence = None
 
+                # Slice higher-timeframe data up to current bar to prevent lookahead
+                htf_sub = None
+                if higher_tf_df is not None:
+                    if "time" in higher_tf_df.columns and "time" in sub_df.columns:
+                        htf_sub = higher_tf_df[higher_tf_df["time"] <= current_time]
+                    else:
+                        htf_sub = higher_tf_df.iloc[:max(50, int(len(higher_tf_df) * (i / len(df_indicators))))]
+
                 for strat_name, strat in self.strategies.items():
                     if not self.regime_detector.is_strategy_recommended(strat_name, regime):
                         continue
 
-                    sig = strat.run(sub_df)
+                    sig = strat.run(sub_df, higher_tf_df=htf_sub)
                     if not sig.is_actionable:
                         continue
+
+                    # AI Prediction if classifier is available
+                    ai_pred = (
+                        self.classifier.predict(sub_df)
+                        if self.classifier is not None
+                        else {"direction": "HOLD", "confidence": 0.0}
+                    )
 
                     # Confluence check
                     confluence = self.aggregator.calculate_confluence(
                         strategy_signal=sig,
-                        ai_prediction={"direction": "HOLD", "confidence": 0.0},
-                        sentiment={"direction": "NEUTRAL", "score": 0.0},
+                        ai_prediction=ai_pred,
+                        sentiment=None,  # Offline backtest has no live sentiment stream
                         regime_analysis={
                             "is_recommended": True,
                             "position_modifier": regime.position_size_modifier,
+                            "regime": regime.regime.value if hasattr(regime.regime, "value") else str(regime.regime),
+                            "trend_direction": getattr(regime, "trend_direction", "NEUTRAL"),
+                            "adx": getattr(regime, "adx_value", 20.0),
+                            "volatility": getattr(regime, "volatility_label", "NORMAL"),
                         },
                         min_score=self.min_confluence,
                     )
@@ -250,7 +271,7 @@ class Backtester:
                             best_confluence = confluence
 
                 if best_signal and best_confluence and best_confluence.should_execute:
-                    direction = best_signal.direction
+                    direction = best_signal.direction.value if hasattr(best_signal.direction, "value") else str(best_signal.direction)
                     raw_price = current_close
 
                     # Apply realistic execution spread & slippage

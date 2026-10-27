@@ -1,11 +1,13 @@
 """
-Signal Aggregator — Confluence Scoring Engine
+Signal Aggregator — Confluence Scoring Engine (v2 — Oct 2026)
 
 Combines signals from:
-- Technical analysis strategies (40% weight)
-- AI price prediction (25% weight)
-- News sentiment analysis (20% weight)
-- Market regime alignment (15% weight)
+- Technical analysis strategies (40% weight, adaptive)
+- AI price prediction (25% weight, adaptive)
+- News sentiment analysis (20% weight, adaptive)
+- Market regime alignment (15% weight, SCALED not binary)
+- Temporal self-attention structural alignment (bonus modifier)
+- Volume confirmation bonus
 
 Only signals above the minimum confluence threshold are executed.
 """
@@ -149,24 +151,49 @@ class SignalAggregator:
             sentiment_contrib = 0.0
             reasons.append("📰 Sentiment: unavailable → +0.0 pts")
 
-        # ── 4. Regime Alignment Score ────────────────────────────────────
+        # ── 4. Regime Alignment Score (SCALED, not binary) ───────────────
         regime_contrib = 0.0
         is_counter_trend = False
         if regime_analysis:
             is_recommended = regime_analysis.get("is_recommended", True)
             trend_dir = regime_analysis.get("trend_direction", "NEUTRAL")
             regime_name = regime_analysis.get("regime", "")
+            adx_val = float(regime_analysis.get("adx", 15.0))
 
             if (trend_dir == "UP" and strategy_signal.direction == SignalDirection.SELL) or \
                (trend_dir == "DOWN" and strategy_signal.direction == SignalDirection.BUY):
                 is_counter_trend = True
 
             if is_recommended and not is_counter_trend:
-                regime_contrib = self.regime_weight
-                reasons.append(f"🌊 Regime: ALIGNED ({regime_name}) → +{regime_contrib:.1f} pts")
-            else:
+                # SCALED regime contribution: stronger ADX = more conviction points
+                # ADX 25-40: moderate trend → 60-80% of regime weight
+                # ADX 40+: strong trend → 80-100% of regime weight
+                # ADX < 25: ranging → 40-60% of regime weight (less confident)
+                if adx_val >= 40:
+                    regime_scale = min(1.0, 0.8 + (adx_val - 40) / 100)
+                elif adx_val >= 25:
+                    regime_scale = 0.6 + (adx_val - 25) / 37.5  # 0.6 to ~1.0
+                else:
+                    regime_scale = max(0.3, 0.4 + adx_val / 62.5)  # 0.4 to ~0.8
+
+                regime_contrib = self.regime_weight * regime_scale
+                reasons.append(
+                    f"🌊 Regime: ALIGNED ({regime_name}, ADX={adx_val:.0f}) → "
+                    f"+{regime_contrib:.1f} pts ({regime_scale:.0%} scale)"
+                )
+            elif is_counter_trend:
+                # Counter-trend gets full negative penalty
                 regime_contrib = -self.regime_weight
-                reasons.append(f"🌊 Regime: COUNTER-TREND ({regime_name} {trend_dir} vs {strategy_signal.direction.value}) → {regime_contrib:.1f} pts")
+                reasons.append(
+                    f"🌊 Regime: COUNTER-TREND ({regime_name} {trend_dir} vs "
+                    f"{strategy_signal.direction.value}) → {regime_contrib:.1f} pts"
+                )
+            else:
+                # Not recommended but not counter-trend — partial penalty
+                regime_contrib = -self.regime_weight * 0.5
+                reasons.append(
+                    f"🌊 Regime: NOT RECOMMENDED ({regime_name}) → {regime_contrib:.1f} pts"
+                )
         else:
             regime_contrib = 0.0
             reasons.append("🌊 Regime: unavailable → +0.0 pts")
@@ -182,8 +209,25 @@ class SignalAggregator:
                 emoji = "🟢" if att_bonus > 0 else "🔴"
                 reasons.append(f"🧠 Attention: {att_conc:.0f}% focus on {anchor_type} → {emoji} {attention_contrib:+.1f} pts")
 
+        # ── 6. Volume Confirmation Bonus ─────────────────────────────────
+        volume_bonus = 0.0
+        if hasattr(strategy_signal, 'metadata') and strategy_signal.metadata:
+            vol_intensity = strategy_signal.metadata.get("volume_intensity", 1.0)
+            if vol_intensity is not None and vol_intensity > 1.5:
+                # Above-average volume confirms the move — small bonus
+                volume_bonus = min(3.0, (vol_intensity - 1.0) * 2.0)
+                reasons.append(f"📊 Volume: {vol_intensity:.1f}x avg → +{volume_bonus:.1f} pts")
+            elif vol_intensity is not None and vol_intensity < 0.5:
+                # Very low volume — signal is suspect
+                volume_bonus = -2.0
+                reasons.append(f"📊 Volume: LOW ({vol_intensity:.1f}x avg) → {volume_bonus:.1f} pts")
+
         # ── Dynamic Regime & Volatility Threshold (Book Ch. 6 & 7) ───────
         effective_min_score = min_score
+        # Proportional threshold scaling if sentiment feed is unavailable (e.g. offline backtest)
+        if sentiment is None:
+            effective_min_score = effective_min_score * ((100.0 - self.sentiment_weight) / 100.0)
+
         if regime_analysis:
             regime_name = regime_analysis.get("regime", "")
             vol_level = regime_analysis.get("volatility", "")
@@ -199,7 +243,9 @@ class SignalAggregator:
                 reasons.append(f"🎯 Dynamic Threshold: +5.0 pts for HIGH VOLATILITY shield (Target: {effective_min_score:.1f})")
 
         # ── Final Score ──────────────────────────────────────────────────
-        total_score = max(0.0, min(100.0, technical_contrib + ai_contrib + sentiment_contrib + regime_contrib + attention_contrib))
+        total_score = max(0.0, min(100.0,
+            technical_contrib + ai_contrib + sentiment_contrib + regime_contrib + attention_contrib + volume_bonus
+        ))
         allow_counter = regime_analysis.get("allow_counter_trend", False) if regime_analysis else False
 
         should_execute = (
@@ -223,7 +269,7 @@ class SignalAggregator:
             f"Confluence: {total_score:.1f}/100 | "
             f"Tech={technical_contrib:.1f} AI={ai_contrib:.1f} "
             f"Sent={sentiment_contrib:.1f} Regime={regime_contrib:.1f} "
-            f"Att={attention_contrib:+.1f} | Target={effective_min_score:.1f} | "
+            f"Att={attention_contrib:+.1f} Vol={volume_bonus:+.1f} | Target={effective_min_score:.1f} | "
             f"Execute={should_execute}"
         )
 
