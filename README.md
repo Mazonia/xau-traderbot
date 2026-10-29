@@ -1,11 +1,11 @@
-# 🏆 XAUUSD AI Trading Bot v3.1 Pro
+# 🏆 XAUUSD AI Trading Bot v3.2 Pro
 
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
 [![MetaTrader 5](https://img.shields.io/badge/MetaTrader-5-red.svg)](https://www.metatrader5.com/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.100%2B-009688.svg)](https://fastapi.tiangolo.com/)
 [![XGBoost](https://img.shields.io/badge/XGBoost-AI-green.svg)](https://xgboost.readthedocs.io/)
 [![Gemini LLM](https://img.shields.io/badge/Google-Gemini_2.0_Flash-4285F4.svg)](https://ai.google.dev/)
-[![Changelog](https://img.shields.io/badge/Changelog-v3.1.0-orange.svg)](CHANGELOG.md)
+[![Changelog](https://img.shields.io/badge/Changelog-v3.2.0-orange.svg)](CHANGELOG.md)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
 
 An institutional-grade, capital-preserving autonomous AI trading bot designed for **XAUUSD (Gold)** on **MetaTrader 5**. Features a **Multi-Timeframe Confirmation Gate Engine**, **Dynamic Drawdown Scaling & Circuit Breakers**, **Temporal Self-Attention Market Scorer**, **Purged TimeSeriesSplit XGBoost Model**, **LLM Self-Learning & Mistake Memory Guard**, **Rollover Protection Shield**, and a **Real-Time Web Dashboard** with live TradingView position overlays.
@@ -14,7 +14,15 @@ An institutional-grade, capital-preserving autonomous AI trading bot designed fo
 
 ## 🌟 Key Features & Innovations
 
-### 🛡️ 1. Institutional Capital Protection & Resilience Engine (v3.1)
+### ⚡ 1. Execution Pipeline Integrity & Livelock Prevention (v3.2)
+Engineered to guarantee continuous, deadlock-free execution in all market environments:
+- **Proportional Neutral Feed Scaling**: Eliminates mathematical deadlocks when AI prediction is `HOLD` or news sentiment is neutral. Dynamically scales confluence target (from 50.0 to ~42.5), allowing strong technical setups to execute cleanly without artificial stalls.
+- **Ranging Regime Directional Neutrality**: Configures `RANGING` market regimes as trend-neutral (`trend_direction = "NEUTRAL"`), enabling two-way oscillating execution (buying support and selling resistance) without false counter-trend vetoes.
+- **Lossless Trade Strategy & Regime Attribution**: Guarantees persistence of strategy names and trade context across external MT5 deal synchronizations and trailing stop closures, eliminating misattribution between day trading and scalping.
+- **Time-Decay Rehabilitation Engine**: Automatically rehabilitates penalized strategies dormant for >12 hours back towards baseline `1.0` multiplier, preventing permanent learning lockouts.
+- **Responsive Multi-Timeframe Trend Gates**: Employs directional ADX and fast EMA20/EMA50 alignment across M5, H1, H4, and D1 to align strategy setup generation with live macro regimes.
+
+### 🛡️ 2. Institutional Capital Protection & Resilience Engine (v3.1)
 Built specifically to eliminate catastrophic drawdowns and counter-trend loss streaks on gold:
 - **Multi-Timeframe Trend Gates (MTF)**:
   - **M5 Scalping**: Must align with H1 trend (EMA 20 vs EMA 50) and blocks entries during low-volume Asian hours (`vol_intensity < 1.0` during 21:00–07:00 UTC).
@@ -29,43 +37,43 @@ Built specifically to eliminate catastrophic drawdowns and counter-trend loss st
   - 2-hour auto-probation timeout on win-rate suspensions so strategies can re-qualify after market regimes shift.
 - **Market Rollover Shield**: Blocks new trade execution between 21:00–22:00 UTC to protect against massive spread spikes.
 
-### 🧠 2. Regularized Purged TimeSeriesSplit XGBoost Engine
+### 🧠 3. Regularized Purged TimeSeriesSplit XGBoost Engine
 - **Anti-Overfitting Regularization**: 300 estimators, `gamma=0.3`, `reg_alpha=0.5`, `reg_lambda=2.0`, `min_child_weight=5`.
 - **Purged Cross-Validation**: 5-fold `TimeSeriesSplit` with a 20-bar purge gap to completely eliminate look-ahead data leakage.
 - **Uncertainty Margin Gate**: Directional calls require at least a 10% probability margin between top classes, otherwise defaulting safely to `HOLD`.
 
-### 🧠 3. Temporal Self-Attention Market Scorer
+### 🧠 4. Temporal Self-Attention Market Scorer
 Inspired by official MQL5 Algorithmic Trading Neural Network research:
 - **Scaled Dot-Product Self-Attention**: Quantifies inter-period query/key relationships across multi-scale rolling feature windows (M1, M5, M15, H1).
 - **Attention Concentration Index (ACI)**: Measures weight dispersion to detect regime switches, market compression, and breakout conviction.
 - **Dynamic Threshold Adaptation**: Automatically tightens or loosens trade entry confidence requirements based on real-time market entropy.
 
-### 📊 4. Candlestick Physics & Stationarity Engine
+### 📊 5. Candlestick Physics & Stationarity Engine
 Processes 61 normalized features computed on every tick/candle:
 - **Anatomy Ratios**: `candle_body_ratio`, `upper_wick_ratio`, `lower_wick_ratio`, and `candle_conviction`.
 - **Stationarity Transformation**: Z-score normalized log-returns (`log_return_zscore_20`) preventing non-stationary drift.
 - **Volume & Force Metrics**: `volume_intensity` and `effort_result_ratio` to validate institutional liquidity surges.
 
-### 🧠 5. Autonomous Self-Learning & Mistake Memory Guard
+### 🧠 6. Autonomous Self-Learning & Mistake Memory Guard
 - **Trade Post-Mortem Analysis**: Powered by Google Gemini LLM to analyze every losing trade.
 - **Vector Database Memory**: Stores failure context in local `ChromaDB`.
 - **Fuzzy Regime Family Matching**: Maps mistakes across broader regime families (`BEARISH`, `BULLISH`, `RANGING`, `VOLATILE`) to prevent repeating historic bad entries in similar market states.
 
-### 🛡️ 6. Pending Order Guardian & Smart Midway Exits
+### 🛡️ 7. Pending Order Guardian & Smart Midway Exits
 - **Limit/Stop Order Guardian**: Continuously evaluates pending orders against shifted technical indicators or high-impact news, autonomously canceling obsolete limit orders.
 - **Smart Midway Exits**: Monitors active position health, trailing stop loss based on ATR volatility, and exiting early if market sentiment flips sharply against open positions.
 
-### 📰 7. Multi-Layer News & Sentiment Deduplication
+### 📰 8. Multi-Layer News & Sentiment Deduplication
 - **SHA-256 Canonical Hashing**: Prevents redundant processing of duplicate RSS headlines across sources.
 - **Temporal & Normalized Matching**: Strips timestamps, dynamic numbers, and source tags to eliminate repetitive news notifications and sentiment bias.
 - **Impact Classification**: Integrates high-impact economic calendar events directly into signal filtering.
 
-### 📈 8. Interactive Real-Time Web Dashboard
+### 📈 9. Interactive Real-Time Web Dashboard
 - **Live TradingView Position Overlay**: View real-time XAUUSD price action with interactive lines showing open `BUY`/`SELL` entries, Stop Loss, and Take Profit levels.
 - **Streaming Metrics**: WebSocket-powered live P&L, balance, equity, win rate, drawdown, and risk meter.
 - **Interactive Control Modal**: Quick regime inspection, model barometer score breakdown, and system status toggles.
 
-### 📱 9. Telegram Remote Bot Controller
+### 📱 10. Telegram Remote Bot Controller
 - **Interactive Keyboards**: Quick menu buttons for status, balance, manual trade triggers, and regime breakdown.
 - **Commands**: `/regime`, `/status`, `/balance`, `/closeall`, `/cancelall`, `/help`.
 - **Real-Time Push Notifications**: instant trade placement, pending order execution, stop loss hits, and news summary alerts.

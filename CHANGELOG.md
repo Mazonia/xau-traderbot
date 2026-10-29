@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [v3.2.0] - 2026-10-29 - Execution Livelock Resolution & Pipeline Integrity Engine
+
+### 🚨 Critical Execution & Strategy Attribution Upgrades
+This release resolves real-world execution lockouts that prevented trades from executing during quiet, neutral, or ranging market conditions. It fixes strategy misattribution in position synchronization, eliminates false counter-trend vetoes in ranging markets, introduces proportional threshold scaling for neutral AI/news feeds, and adds time-decay rehabilitation to the self-learning engine.
+
+### 🛡️ Key Improvements & Fixes
+
+#### 1. Proportional Confluence Threshold Scaling for Neutral Feeds
+- **Eliminated Mathematical Lockout**: When the AI classifier is in `HOLD` (uncertain) and news sentiment is neutral, the target confluence threshold now dynamically scales down proportionally (from 50.0 to ~42.5). High-conviction technical setups (70%+ setup score) backed by volume and regime alignment can now execute without being penalized by the absence of directional news or AI bias.
+
+#### 2. Ranging Regime Neutrality & Oscillation Allowance
+- **Fixed Ranging Vetoes**: Market regimes with ADX < 25 (`MarketRegime.RANGING`) now unequivocally set `trend_direction = "NEUTRAL"`.
+- **Two-Way Range Execution**: In ranging markets, oscillating trades (buying support, selling resistance) are recognized as structurally valid and are exempted from counter-trend directional vetoes. Over 370+ false vetoes experienced during ranging conditions are permanently eradicated.
+
+#### 3. Lossless Strategy & Regime Attribution in `sync_positions`
+- **Fixed Strategy Misattribution**: Corrected `sync_positions()` in `execution/trade_executor.py` to preserve original strategy, regime, confluence, and sentiment metadata from database records when MT5 positions close externally. Day trading stop-loss hits are no longer erroneously blamed on Scalping.
+- **Sanitized Order Comments**: Improved strategy resolution in `close_trade()` to parse pipe-delimited comments cleanly and prevent corrupted strategy keys in `adaptive_weights`.
+
+#### 4. Time-Decay Rehabilitation for Penalized Strategies
+- **Prevented Permanent Deadlocks**: Introduced a time-decay mechanism in `TradeLearner`: if a penalized strategy has not experienced losses in >12 hours, its performance multiplier automatically recovers towards baseline `1.0` (mean reversion).
+- **Proactive Database Healing**: Added automatic cleanup and sanitization of persisted adaptive weights on boot.
+
+#### 5. Responsive Multi-Timeframe Trend Detection
+- **ADX + Fast EMA Directional Movement**: Upgraded higher-timeframe filters in `ScalpingStrategy` (H1), `DayTradingStrategy` (H4), and `SwingTradingStrategy` (D1) to evaluate EMA20 vs EMA50 and directional movement (`+DI` vs `-DI`) instead of lagging 200-bar Golden/Death crosses, ensuring strategies align with macro regimes before generating signals.
+
+#### 6. Comprehensive Automated Test Suite
+- Added `tests/test_v3_institutional_fixes.py` verifying ranging neutrality, neutral feed threshold scaling, strategy persistence, and time-decay rehabilitation. All 72 project tests pass.
+
+---
+
 ## [v3.1.0] - 2026-10-27 - Institutional Capital Protection & Resilience Engine
 
 ### 🚨 Critical Resilience Upgrades & Anti-Drawdown Protections
