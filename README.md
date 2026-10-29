@@ -25,7 +25,7 @@ Engineered to guarantee continuous, deadlock-free execution in all market enviro
 ### 🛡️ 2. Institutional Capital Protection & Resilience Engine (v3.1)
 Built specifically to eliminate catastrophic drawdowns and counter-trend loss streaks on gold:
 - **Multi-Timeframe Trend Gates (MTF)**:
-  - **M5 Scalping**: Must align with H1 trend (EMA 20 vs EMA 50) and blocks entries during low-volume Asian hours (`vol_intensity < 1.0` during 21:00–07:00 UTC).
+  - **M5 Scalping**: Must align with H1 trend (EMA 20 vs EMA 50) and blocks entries during low-volume Asian hours (`vol_intensity < 1.0` during 21:00-07:00 UTC).
   - **H1 Day Trading**: Requires H4 macro trend alignment before entering. Counter-trend pullbacks into falling knives are strictly vetoed.
   - **H4 Swing Trading**: Requires D1 macro trend alignment (D1 EMA 20 vs EMA 50).
 - **Dynamic Drawdown Position Halving & Freeze**:
@@ -35,7 +35,7 @@ Built specifically to eliminate catastrophic drawdowns and counter-trend loss st
   - 3 consecutive losses on any strategy triggers an exponential cooldown (`15m -> 30m -> 60m -> 120m`).
   - Asymmetric confidence decay (0.78x multiplier drop on loss, 1.03x recovery on win).
   - 2-hour auto-probation timeout on win-rate suspensions so strategies can re-qualify after market regimes shift.
-- **Market Rollover Shield**: Blocks new trade execution between 21:00–22:00 UTC to protect against massive spread spikes.
+- **Market Rollover Shield**: Blocks new trade execution between 21:00-22:00 UTC to protect against massive spread spikes.
 
 ### 🧠 3. Regularized Purged TimeSeriesSplit XGBoost Engine
 - **Anti-Overfitting Regularization**: 300 estimators, `gamma=0.3`, `reg_alpha=0.5`, `reg_lambda=2.0`, `min_child_weight=5`.
@@ -265,6 +265,25 @@ python scripts/run_recent_backtest.py
 | `/closeall` | Immediately emergency close all open positions |
 | `/cancelall` | Cancel all active pending limit/stop orders |
 | `/help` | View help and command reference |
+
+---
+
+## ❓ Frequently Asked Questions (FAQ)
+
+### What is the XAUUSD AI Trading Bot?
+The XAUUSD AI Trading Bot is an institutional-grade, quantitative algorithmic trading system engineered for MetaTrader 5. It trades Gold (XAUUSD) using regularized XGBoost classification, temporal self-attention market scoring, and Google Gemini LLM trade post-mortem analysis.
+
+### How does the bot prevent overfitting and look-ahead bias?
+The machine learning pipeline implements a 5-fold Purged TimeSeriesSplit with a 20-bar purge buffer between train and test windows, eliminating data leakage from future candles into model predictions.
+
+### How does the system handle high-volatility events and drawdowns on Gold?
+The bot enforces multi-layered risk protocols:
+- Dynamic drawdown position halving at 5% drawdown and a hard freeze at 10% drawdown.
+- Consecutive loss circuit breakers that enforce exponential cooldown intervals (15m to 120m).
+- Market rollover shield preventing trade entry between 21:00 and 22:00 UTC when broker spreads widen drastically.
+
+### Can the bot run 24/7 without manual intervention?
+Yes. The system runs fully autonomously on a Windows VPS or local machine with direct MetaTrader 5 execution, Telegram notification alerts, and a FastAPI web dashboard for remote telemetry.
 
 ---
 

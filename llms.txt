@@ -1,0 +1,53 @@
+# XAUUSD AI Trading Bot - Quantitative Gold Algorithmic Trading System
+
+> Institutional-grade, capital-preserving autonomous AI trading system for XAUUSD (Gold) on MetaTrader 5 combining purged cross-validated XGBoost models, temporal self-attention market scoring, Google Gemini post-mortem LLM analysis, and FastAPI dashboard monitoring.
+
+## Project Overview
+- **Name:** XAUUSD AI Trading Bot (Pro v3.2)
+- **Repository:** https://github.com/Mazonia/xau-traderbot
+- **License:** GPL-3.0
+- **Runtime:** Python 3.10+
+- **Execution Platform:** MetaTrader 5 (MT5) Desktop Terminal (Windows / VPS)
+- **Primary Symbol:** XAUUSD (Gold vs US Dollar)
+
+## Architecture & Technology Stack
+- **Machine Learning Engine:** XGBoost (300 estimators, reg_alpha=0.5, reg_lambda=2.0, min_child_weight=5) trained with 5-fold Purged TimeSeriesSplit and 20-bar purge gaps to prevent look-ahead leakage.
+- **Attention Scorer:** Temporal Self-Attention Market Scorer computing Attention Concentration Index (ACI) to dynamically tighten entry thresholds during market entropy.
+- **LLM Post-Mortem Intelligence:** Google Gemini 2.0 Flash integration analyzing trade failures and storing lessons into a ChromaDB vector database.
+- **Web Dashboard:** FastAPI + Uvicorn server providing live position telemetry, equity curves, strategy performance metrics, and TradingView charts.
+- **Execution Bridge:** MetaTrader5 Python package interfacing with direct broker execution via ECN/STP accounts.
+
+## Capital Protection & Risk Management
+- **Multi-Timeframe Confirmation Gates:** Scalping setups (M5) require H1 trend agreement; day trading setups (H1) require H4 trend alignment; swing setups (H4) require D1 alignment.
+- **Dynamic Drawdown Scaling:** At 5% drawdown, risk per trade is halved. At 10% drawdown, a trading freeze locks out new entries.
+- **Streak Circuit Breakers:** 3 consecutive losses on any strategy trigger exponential cooldowns (15m, 30m, 60m, 120m).
+- **Market Rollover Shield:** Blocks entries during wide-spread broker rollover hours (21:00 to 22:00 UTC).
+
+## Quickstart & Installation
+
+```bash
+# Clone the repository
+git clone https://github.com/Mazonia/xau-traderbot.git
+cd xau-traderbot
+
+# Create and activate virtual environment
+python -m venv venv
+.\venv\Scripts\activate
+
+# Install dependencies
+pip install -r requirements.txt
+
+# Configure credentials
+copy .env.example .env
+# Edit .env with MT5_ACCOUNT, MT5_PASSWORD, MT5_SERVER, and GEMINI_API_KEY
+
+# Train XGBoost model with purged cross-validation
+python train_model.py
+
+# Launch trading system and dashboard
+python main.py
+```
+
+## Dashboard Telemetry
+- Access the local dashboard at: `http://localhost:8000`
+- Provides real-time websocket updates of account equity, live open trades, ATR volatility readings, and AI regime classification.
