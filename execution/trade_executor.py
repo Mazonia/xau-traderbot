@@ -253,14 +253,26 @@ class TradeExecutor:
             )
             try:
                 from ai.trade_learner import trade_learner
+                trade_obj = crud.get_trade_by_ticket(ticket)
+                resolved_strat = trade_obj.strategy if (trade_obj and getattr(trade_obj, "strategy", None)) else None
+                if not resolved_strat:
+                    raw_comment = position.get("comment", "")
+                    resolved_strat = raw_comment.split("|")[0].replace("c_", "").replace("close_", "") if raw_comment else "scalping"
+                for s_valid in ("scalping", "day_trading", "swing_trading"):
+                    if s_valid in resolved_strat:
+                        resolved_strat = s_valid
+                        break
+                else:
+                    resolved_strat = "scalping"
+
                 trade_learner.on_trade_closed({
                     "ticket": ticket,
-                    "strategy": position.get("comment", "scalping").replace("close_", ""),
+                    "strategy": resolved_strat,
                     "direction": position.get("type", "BUY"),
                     "profit": profit,
-                    "regime": "RANGING",
-                    "confluence_score": 75.0,
-                    "sentiment_score": 0.0,
+                    "regime": getattr(trade_obj, "regime", "RANGING") if trade_obj else "RANGING",
+                    "confluence_score": getattr(trade_obj, "confluence_score", 75.0) if trade_obj else 75.0,
+                    "sentiment_score": getattr(trade_obj, "sentiment_score", 0.0) if trade_obj else 0.0,
                 })
             except Exception as e:
                 logger.warning(f"TradeLearner hook warning for #{ticket}: {e}")
@@ -326,6 +338,7 @@ class TradeExecutor:
                     closed_events.append({
                         "ticket": trade.ticket,
                         "symbol": getattr(trade, "symbol", "XAUUSD"),
+                        "strategy": getattr(trade, "strategy", "scalping"),
                         "direction": trade.order_type,
                         "entry_price": trade.entry_price,
                         "exit_price": exit_price,
@@ -333,6 +346,9 @@ class TradeExecutor:
                         "swap": swap,
                         "commission": commission,
                         "reason": reason,
+                        "regime": getattr(trade, "regime", "RANGING"),
+                        "confluence_score": getattr(trade, "confluence_score", 70.0),
+                        "sentiment_score": getattr(trade, "sentiment_score", 0.0),
                     })
                 except Exception as e:
                     logger.error(f"Failed to process externally closed position #{trade.ticket}: {e}")

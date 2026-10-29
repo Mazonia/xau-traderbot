@@ -120,6 +120,15 @@ def close_trade(
         session.close()
 
 
+def get_trade_by_ticket(ticket: int) -> Optional[Trade]:
+    """Get trade by MT5 ticket."""
+    session = get_session()
+    try:
+        return session.query(Trade).filter_by(ticket=ticket).first()
+    finally:
+        session.close()
+
+
 def get_open_trades() -> list[Trade]:
     """Get all open trades."""
     session = get_session()

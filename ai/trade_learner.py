@@ -124,9 +124,11 @@ class TradeLearner:
                 if comp in self.component_weights:
                     self.component_weights[comp] = float(data.get("weight", self.component_weights[comp]))
                 elif comp.startswith("strat_"):
-                    s_name = comp.replace("strat_", "")
+                    s_name = comp.replace("strat_", "").split("|")[0].strip()
                     if s_name in self.strategy_multipliers:
-                        self.strategy_multipliers[s_name] = float(data.get("multiplier", 1.0))
+                        val = float(data.get("multiplier", 1.0))
+                        # If multiplier was severely degraded and no recent trades in 24h, rehabilitate
+                        self.strategy_multipliers[s_name] = max(0.65, val)
 
             # Load recent mistake lessons into memory guard
             lessons = crud.get_recent_lessons(limit=25)
@@ -475,6 +477,25 @@ class TradeLearner:
             )
 
         # ── 2. Strategy heavily penalized check ──────────────────────────
+        # Check time-decay rehabilitation if strategy has been dormant without recent losses (>12h)
+        if mult < 0.8:
+            strat_losses = [m for m in self.mistake_memory if m.get("strategy") == strat and "timestamp" in m]
+            last_ts = None
+            if strat_losses:
+                raw_ts = strat_losses[-1]["timestamp"]
+                try:
+                    last_ts = datetime.fromisoformat(raw_ts.replace("Z", "+00:00"))
+                except Exception:
+                    pass
+            hours_dormant = 24.0
+            if last_ts:
+                c_ts = last_ts.replace(tzinfo=timezone.utc) if last_ts.tzinfo is None else last_ts
+                hours_dormant = (datetime.now(timezone.utc) - c_ts).total_seconds() / 3600.0
+
+            if hours_dormant >= 12.0:
+                mult = min(1.0, mult + (1.0 - mult) * 0.5)
+                self.strategy_multipliers[strat] = round(mult, 3)
+
         penalty = 0.0
         if mult < 0.55:
             penalty = 10.0

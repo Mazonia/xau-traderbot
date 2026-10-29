@@ -115,16 +115,34 @@ class SwingTradingStrategy(BaseStrategy):
         htf_aligned_buy = True
         htf_aligned_sell = True
         if higher_tf_df is not None and len(higher_tf_df) > 50:
-            htf_df = ta.add_ema(higher_tf_df.copy(), [50, 200])
+            htf_df = ta.add_ema(higher_tf_df.copy(), [20, 50, 200])
+            htf_df = ta.add_adx(htf_df)
             htf_price = float(htf_df["close"].iloc[-1])
+            htf_ema20 = float(htf_df["ema_20"].iloc[-1]) if "ema_20" in htf_df.columns else htf_price
             htf_ema50 = float(htf_df["ema_50"].iloc[-1]) if "ema_50" in htf_df.columns else htf_price
             htf_ema200 = float(htf_df["ema_200"].iloc[-1]) if "ema_200" in htf_df.columns else htf_price
-            if htf_price > htf_ema50 > htf_ema200:
+            htf_adx = float(htf_df["adx"].iloc[-1]) if "adx" in htf_df.columns else 0.0
+            htf_di_plus = float(htf_df["di_plus"].iloc[-1]) if "di_plus" in htf_df.columns else 0.0
+            htf_di_minus = float(htf_df["di_minus"].iloc[-1]) if "di_minus" in htf_df.columns else 0.0
+
+            is_htf_bull = (htf_price > htf_ema50) and (htf_ema20 >= htf_ema50 or htf_price > htf_ema200)
+            is_htf_bear = (htf_price < htf_ema50) and (htf_ema20 <= htf_ema50 or htf_price < htf_ema200)
+
+            if htf_adx >= 25:
+                if htf_di_plus > htf_di_minus and is_htf_bull:
+                    htf_trend = "BULLISH"
+                    htf_aligned_sell = False  # D1 bullish → swing shorting blocked
+                elif htf_di_minus > htf_di_plus and is_htf_bear:
+                    htf_trend = "BEARISH"
+                    htf_aligned_buy = False  # D1 bearish → swing buying blocked
+                else:
+                    htf_trend = "NEUTRAL"
+            elif is_htf_bull and not is_htf_bear:
                 htf_trend = "BULLISH"
-                htf_aligned_sell = False  # D1 bullish → swing shorting blocked
-            elif htf_price < htf_ema50 < htf_ema200:
+                htf_aligned_sell = False
+            elif is_htf_bear and not is_htf_bull:
                 htf_trend = "BEARISH"
-                htf_aligned_buy = False  # D1 bearish → swing buying blocked
+                htf_aligned_buy = False
             else:
                 htf_trend = "NEUTRAL"
 

@@ -381,8 +381,12 @@ class TradingBot:
 
                         # Check regime directional alignment and counter-trend allowance
                         trend_dir = regime.trend_direction if regime else "NEUTRAL"
+                        regime_name = regime.regime.value if regime else "RANGING"
                         is_aligned = True
-                        if trend_dir == "UP" and signal.direction.value == "SELL":
+                        if regime_name == "RANGING":
+                            # In ranging markets, oscillating trades (both BUY and SELL) are structurally valid
+                            is_aligned = True
+                        elif trend_dir == "UP" and signal.direction.value == "SELL":
                             is_aligned = False
                         elif trend_dir == "DOWN" and signal.direction.value == "BUY":
                             is_aligned = False

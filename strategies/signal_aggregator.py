@@ -160,7 +160,10 @@ class SignalAggregator:
             regime_name = regime_analysis.get("regime", "")
             adx_val = float(regime_analysis.get("adx", 15.0))
 
-            if (trend_dir == "UP" and strategy_signal.direction == SignalDirection.SELL) or \
+            if regime_name == "RANGING":
+                is_counter_trend = False
+                trend_dir = "NEUTRAL"
+            elif (trend_dir == "UP" and strategy_signal.direction == SignalDirection.SELL) or \
                (trend_dir == "DOWN" and strategy_signal.direction == SignalDirection.BUY):
                 is_counter_trend = True
 
@@ -224,9 +227,14 @@ class SignalAggregator:
 
         # ── Dynamic Regime & Volatility Threshold (Book Ch. 6 & 7) ───────
         effective_min_score = min_score
-        # Proportional threshold scaling if sentiment feed is unavailable (e.g. offline backtest)
-        if sentiment is None:
-            effective_min_score = effective_min_score * ((100.0 - self.sentiment_weight) / 100.0)
+        # Proportional threshold scaling if feeds are neutral or unavailable
+        if sentiment is None or sentiment.get("direction") == "NEUTRAL":
+            effective_min_score = effective_min_score * ((100.0 - (self.sentiment_weight * 0.5)) / 100.0)
+
+        # Scale threshold when AI model is in HOLD (neutral conviction)
+        # Prevents locking out valid high-conviction technical setups
+        if ai_prediction is None or ai_prediction.get("direction") == "HOLD":
+            effective_min_score = effective_min_score * ((100.0 - (self.ai_weight * 0.5)) / 100.0)
 
         if regime_analysis:
             regime_name = regime_analysis.get("regime", "")

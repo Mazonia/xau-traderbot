@@ -174,6 +174,7 @@ class RegimeDetector:
         # Ranging
         else:
             regime = MarketRegime.RANGING
+            trend_dir = "NEUTRAL"  # In a ranging market, there is no prevailing trend
             reasons.append(f"Ranging/choppy market (ADX={adx_value:.1f})")
             recommended = ["scalping"]
             position_modifier = 0.7  # Reduce size in ranging markets
