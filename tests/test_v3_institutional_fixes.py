@@ -106,6 +106,7 @@ def test_signal_aggregator_ai_hold_threshold_scaling():
 def test_trade_learner_rehabilitation():
     """Verify that a penalized strategy recovers its multiplier after period of dormancy."""
     learner = TradeLearner()
+    learner._strategy_suspended["scalping"] = False
     learner.strategy_multipliers["scalping"] = 0.45  # severely penalized
 
     # Screen with simulated dormant memory (> 12h ago)
@@ -162,3 +163,15 @@ def test_trade_executor_sync_positions_preserves_strategy():
         assert len(closed) == 1
         assert closed[0]["strategy"] == "day_trading", "Must preserve original strategy to prevent misattribution"
         assert closed[0]["regime"] == "MODERATE_TREND_DOWN"
+
+
+def test_mt5_terminal_visibility_controls():
+    """Verify MT5 minimize and watcher initialization."""
+    from core.mt5_connector import MT5Connector
+    connector = MT5Connector()
+    with patch.object(connector, "get_terminal_hwnd", return_value=12345), \
+         patch("ctypes.windll.user32.ShowWindow") as mock_show:
+        res = connector.minimize_terminal()
+        assert res is True
+        mock_show.assert_called_with(12345, 7)  # SW_SHOWMINNOACTIVE = 7
+

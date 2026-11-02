@@ -71,6 +71,8 @@ class MT5Connector:
         self._max_retries = 5
         self._retry_delay = 5  # seconds
         self._lock = threading.RLock()  # Thread-safe MT5 IPC mutex
+        self._terminal_watcher_thread = None
+        self._terminal_watcher_stop = None
 
     # ── Connection Management ────────────────────────────────────────────
 
@@ -126,7 +128,10 @@ class MT5Connector:
                     else:
                         logger.success("Connected to MT5 (account info unavailable)")
 
-                if getattr(self.settings.mt5, "hide_terminal", True):
+                hide_setting = str(getattr(self.settings.mt5, "hide_terminal", "true")).lower()
+                if hide_setting in ("minimize", "min"):
+                    self.minimize_terminal()
+                elif hide_setting in ("true", "1", "yes"):
                     self.hide_terminal()
 
                 return True
@@ -142,6 +147,8 @@ class MT5Connector:
     @synchronized
     def disconnect(self):
         """Safely shut down the MT5 connection."""
+        if self._terminal_watcher_stop:
+            self._terminal_watcher_stop.set()
         if self._connected:
             mt5.shutdown()
             self._connected = False
@@ -219,8 +226,32 @@ class MT5Connector:
             logger.debug(f"Could not locate MT5 window handle: {e}")
             return None
 
+    def _start_terminal_watcher(self):
+        """Start a background watcher that automatically unhides MT5 if the user manually tries to launch it."""
+        if self._terminal_watcher_thread and self._terminal_watcher_thread.is_alive():
+            return
+        self._terminal_watcher_stop = threading.Event()
+
+        def _watch_loop():
+            import psutil
+            while not self._terminal_watcher_stop.is_set():
+                try:
+                    if not self.is_terminal_visible():
+                        procs = [p for p in psutil.process_iter(['name']) if p.info.get('name') == 'terminal64.exe']
+                        if len(procs) > 1:
+                            logger.info("Detected user manual MT5 launch attempt. Restoring terminal to desktop...")
+                            self.show_terminal()
+                except Exception:
+                    pass
+                time.sleep(0.2)
+
+        self._terminal_watcher_thread = threading.Thread(
+            target=_watch_loop, daemon=True, name="MT5TerminalWatcher"
+        )
+        self._terminal_watcher_thread.start()
+
     def hide_terminal(self) -> bool:
-        """Hide the MetaTrader 5 terminal window (runs silently in the background)."""
+        """Hide the MetaTrader 5 terminal window (runs silently in the background with auto-unhide on manual launch)."""
         try:
             import ctypes
             user32 = ctypes.windll.user32
@@ -229,9 +260,25 @@ class MT5Connector:
                 SW_HIDE = 0
                 user32.ShowWindow(hwnd, SW_HIDE)
                 logger.info(f"🙈 MetaTrader 5 terminal window (HWND {hwnd}) hidden in the background.")
+                self._start_terminal_watcher()
                 return True
         except Exception as e:
             logger.debug(f"Failed to hide MT5 window: {e}")
+        return False
+
+    def minimize_terminal(self) -> bool:
+        """Minimize MetaTrader 5 terminal window to taskbar (runs in background without stealing focus)."""
+        try:
+            import ctypes
+            user32 = ctypes.windll.user32
+            hwnd = self.get_terminal_hwnd()
+            if hwnd:
+                SW_SHOWMINNOACTIVE = 7
+                user32.ShowWindow(hwnd, SW_SHOWMINNOACTIVE)
+                logger.info(f"MetaTrader 5 terminal window (HWND {hwnd}) minimized to taskbar.")
+                return True
+        except Exception as e:
+            logger.debug(f"Failed to minimize MT5 window: {e}")
         return False
 
     def show_terminal(self) -> bool:
@@ -968,4 +1015,4 @@ def get_mt5_connector() -> MT5Connector:
         with _connector_lock:
             if _shared_connector is None:
                 _shared_connector = MT5Connector()
-    return _shared_connector
+    return _shared_connector
