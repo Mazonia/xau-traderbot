@@ -12,6 +12,46 @@ An institutional-grade, capital-preserving autonomous AI trading bot designed fo
 
 ---
 
+## 📑 Table of Contents
+
+- [🌟 Key Features & Innovations](#-key-features--innovations)
+  - [⚡ 1. Execution Pipeline Integrity & Livelock Prevention (v3.2)](#-1-execution-pipeline-integrity--livelock-prevention-v32)
+  - [🛡️ 2. Institutional Capital Protection & Resilience Engine (v3.1)](#️-2-institutional-capital-protection--resilience-engine-v31)
+  - [🧠 3. Regularized Purged TimeSeriesSplit XGBoost Engine](#-3-regularized-purged-timeseriessplit-xgboost-engine)
+  - [🧠 4. Temporal Self-Attention Market Scorer](#-4-temporal-self-attention-market-scorer)
+  - [📊 5. Candlestick Physics & Stationarity Engine](#-5-candlestick-physics--stationarity-engine)
+  - [🧠 6. Autonomous Self-Learning & Mistake Memory Guard](#-6-autonomous-self-learning--mistake-memory-guard)
+  - [🛡️ 7. Pending Order Guardian & Smart Midway Exits](#️-7-pending-order-guardian--smart-midway-exits)
+  - [📰 8. Multi-Layer News & Sentiment Deduplication](#-8-multi-layer-news--sentiment-deduplication)
+  - [📈 9. Interactive Real-Time Web Dashboard](#-9-interactive-real-time-web-dashboard)
+  - [📱 10. Telegram Remote Bot Controller](#-10-telegram-remote-bot-controller)
+- [🏗️ System Architecture](#️-system-architecture)
+- [📂 Project Structure](#-project-structure)
+- [🔑 Credentials & API Setup Guide](#-credentials--api-setup-guide)
+  - [1. MetaTrader 5 Account & Terminal](#1-metatrader-5-account--terminal)
+  - [2. Google Gemini AI API Key](#2-google-gemini-ai-api-key)
+  - [3. Telegram Bot Token & Chat ID](#3-telegram-bot-token--chat-id)
+  - [4. Financial News APIs (Optional / Supplementary)](#4-financial-news-apis-optional--supplementary)
+  - [5. Web Dashboard Credentials](#5-web-dashboard-credentials)
+- [⚡ Installation & Setup Guide](#-installation--setup-guide)
+  - [1. Prerequisites](#1-prerequisites)
+  - [2. Clone Repository & Install Dependencies](#2-clone-repository--install-dependencies)
+  - [3. Configure Environment Variables](#3-configure-environment-variables)
+- [🚀 Running the Bot](#-running-the-bot)
+  - [🔄 Auto-Start on PC Boot (Background Daemon)](#-auto-start-on-pc-boot-background-daemon)
+  - [Start Full Suite (Trading Bot + Web Dashboard + Telegram Bot)](#start-full-suite-trading-bot--web-dashboard--telegram-bot)
+  - [Start Trading Bot Only (Headless)](#start-trading-bot-only-headless)
+  - [🛑 Managing Background Processes](#-managing-background-processes)
+  - [Retrain XGBoost AI Model](#retrain-xgboost-ai-model)
+  - [Run Diagnostic System Audit & Automated Tests](#run-diagnostic-system-audit--automated-tests)
+  - [🔬 Run Multi-Timeframe Historical Backtests](#-run-multi-timeframe-historical-backtests)
+- [📱 Telegram Commands & Controls](#-telegram-commands--controls)
+- [❓ Frequently Asked Questions (FAQ)](#-frequently-asked-questions-faq)
+- [🛡️ Risk & Safety Disclaimer](#️-risk--safety-disclaimer)
+- [📜 License](#-license)
+
+---
+
 ## 🌟 Key Features & Innovations
 
 ### ⚡ 1. Execution Pipeline Integrity & Livelock Prevention (v3.2)
@@ -158,6 +198,72 @@ XAUUSD-AI-Trading-Bot/
 
 ---
 
+## 🔑 Credentials & API Setup Guide
+
+This section provides step-by-step instructions and official links to gather all accounts, credentials, and API keys needed to populate `config/.env`.
+
+### 1. MetaTrader 5 Account & Terminal
+The bot communicates directly with the desktop MetaTrader 5 terminal via the Python `MetaTrader5` library.
+
+- **Broker Account**:
+  - Sign up with a broker supporting MetaTrader 5 and XAUUSD trading (e.g., [Exness](https://www.exness.com/), [IC Markets](https://www.icmarkets.com/), [Tickmill](https://www.tickmill.com/), etc.).
+  - Create an **MT5 Demo Account** (recommended for testing) or Live Account.
+  - From your broker client portal or confirmation email, locate:
+    - **`MT5_LOGIN`**: Your numeric account login (e.g., `12345678`).
+    - **`MT5_PASSWORD`**: Trading master password for this account.
+    - **`MT5_SERVER`**: The exact server name specified by your broker (e.g., `Exness-MT5Trial6` or `ICMarketsSC-Demo`).
+- **Desktop Terminal**:
+  - Download and install MetaTrader 5: [MetaTrader 5 Official Download](https://www.metatrader5.com/en/download).
+  - Note your executable installation path for **`MT5_PATH`** (defaults to `C:\Program Files\MetaTrader 5\terminal64.exe`).
+  - Open MT5, log into your account, and navigate to **Tools -> Options -> Expert Advisors**:
+    - Check **"Allow Algo Trading"**.
+    - (Optional) Uncheck "Disable Algo Trading when account/profile has been changed".
+
+### 2. Google Gemini AI API Key
+Used for news sentiment scoring, trade post-mortem self-learning, and the mistake memory guard.
+
+- **Portal**: [Google AI Studio](https://aistudio.google.com/)
+- **Steps**:
+  1. Sign in with your Google account.
+  2. Click on **"Get API key"** (or navigate to [API Keys](https://aistudio.google.com/app/apikey)).
+  3. Click **"Create API key"** and choose or create a Google Cloud project.
+  4. Copy the generated key and assign it to **`GEMINI_API_KEY`**.
+
+### 3. Telegram Bot Token & Chat ID
+Enables real-time trade signals, performance telemetry, and remote interactive commands (`/status`, `/regime`, `/balance`, `/closeall`).
+
+- **Telegram Bot Token (`TELEGRAM_BOT_TOKEN`)**:
+  1. Open Telegram and search for the official [@BotFather](https://t.me/BotFather).
+  2. Start a chat and send `/newbot`.
+  3. Enter a display name and unique username ending in `bot` (e.g., `MyGoldTradingBot`).
+  4. BotFather will provide an API token formatted like `123456789:ABCdefGhIJKlmNoPQRsTUVwxyZ`.
+- **Telegram Chat ID (`TELEGRAM_CHAT_ID`)**:
+  1. Open your newly created bot in Telegram and click **Start** (or send any text message to it).
+  2. To get your numeric user or group Chat ID:
+     - Search and start [@userinfobot](https://t.me/userinfobot) or [@IDBot](https://t.me/myidbot), which will reply with your `Id` (e.g., `987654321`).
+     - Alternatively, open your browser and visit:  
+       `https://api.telegram.org/bot<YOUR_BOT_TOKEN>/getUpdates`  
+       Look for `"chat":{"id": 987654321}` in the returned JSON.
+  3. Set this ID as **`TELEGRAM_CHAT_ID`**.
+
+### 4. Financial News APIs (Optional / Supplementary)
+The bot incorporates economic calendar RSS feeds out-of-the-box. You can optionally add dedicated news API keys for higher coverage:
+
+- **Finnhub (`FINNHUB_API_KEY`)**:
+  - Register at [Finnhub.io](https://finnhub.io/).
+  - Obtain a free API key from your [Finnhub Dashboard](https://finnhub.io/dashboard).
+- **Alpha Vantage (`ALPHA_VANTAGE_API_KEY`)**:
+  - Claim a free key at [Alpha Vantage](https://www.alphavantage.co/support/#api-key).
+
+### 5. Web Dashboard Credentials
+Used to protect the local/remote FastAPI monitoring web portal:
+
+- **`DASHBOARD_SECRET_KEY`**: Set a strong random string (e.g., generated with `python -c "import secrets; print(secrets.token_hex(32))"`).
+- **`DASHBOARD_USERNAME`**: Default is `admin` (or any custom username).
+- **`DASHBOARD_PASSWORD`**: Strong password to log into the web dashboard at `http://127.0.0.1:8080`.
+
+---
+
 ## ⚡ Installation & Setup Guide
 
 ### 1. Prerequisites
@@ -179,12 +285,17 @@ pip install -r requirements.txt
 ```
 
 ### 3. Configure Environment Variables
-Create or update the `.env` file in the `config/` directory:
+Copy `config/.env.example` to `config/.env` and update with the credentials retrieved above:
+```bash
+copy config\.env.example config\.env
+```
+Example `.env`:
 ```env
 # MetaTrader 5 Credentials
-MT5_ACCOUNT=12345678
+MT5_LOGIN=12345678
 MT5_PASSWORD=YourPasswordHere
 MT5_SERVER=Exness-MT5Trial6
+MT5_PATH=C:\Program Files\MetaTrader 5\terminal64.exe
 
 # Telegram Bot Integration
 TELEGRAM_BOT_TOKEN=123456789:ABCdefGhIJKlmNoPQRsTUVwxyZ
@@ -193,11 +304,17 @@ TELEGRAM_CHAT_ID=987654321
 # Google Gemini API Key (For Sentiment & Self-Learning Memory)
 GEMINI_API_KEY=AIzaSyYourGeminiApiKeyHere
 
-# Bot Operational Settings
-SYMBOL=XAUUSD
-TIMEFRAME=M5
-RISK_PERCENT=1.0
-MAX_POSITIONS=3
+# News APIs (Optional)
+FINNHUB_API_KEY=your_finnhub_key_here
+ALPHA_VANTAGE_API_KEY=your_alpha_vantage_key_here
+
+# Web Dashboard Security
+DASHBOARD_SECRET_KEY=generate_a_random_secret_key_here
+DASHBOARD_USERNAME=admin
+DASHBOARD_PASSWORD=your_secure_password
+
+# Database (Default local SQLite)
+DATABASE_URL=sqlite:///./data/trading_bot.db
 ```
 
 ---
