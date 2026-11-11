@@ -1,5 +1,7 @@
 # 🏆 XAUUSD AI Trading Bot v3.2 Pro
 
+![XAUUSD AI Trading Bot](assets/social_previews/xau_traderbot_preview.jpg)
+
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
 [![MetaTrader 5](https://img.shields.io/badge/MetaTrader-5-red.svg)](https://www.metatrader5.com/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.100%2B-009688.svg)](https://fastapi.tiangolo.com/)
