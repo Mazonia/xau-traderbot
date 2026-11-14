@@ -21,6 +21,7 @@ from loguru import logger
 from database import crud
 from database.models import TradeLesson, AdaptiveWeight
 from config.settings import get_settings
+from ai.federated_sync import FederatedSync
 
 
 # ── Fuzzy Regime Similarity Map ──────────────────────────────────────────
@@ -113,6 +114,9 @@ class TradeLearner:
             "swing_trading": None,
         }
 
+        # Multi-Tenant Federated Learning Coordinator
+        self.federated_sync = FederatedSync(self.settings)
+
         # Load persisted adaptive state from database
         self._load_persisted_state()
 
@@ -161,20 +165,82 @@ class TradeLearner:
             for strat in self._rolling_outcomes:
                 self._evaluate_win_rate_gating(strat)
 
+            # Sync initial global weights and network mistake memories
+            try:
+                self.sync_federated_state()
+            except Exception as e:
+                logger.debug(f"Initial federated sync note: {e}")
+
             logger.info(
-                f"🧠 Self-Learning Engine v2 initialized | Adaptive Multipliers: {self.strategy_multipliers} "
+                f"🧠 Self-Learning Engine v3 initialized | Adaptive Multipliers: {self.strategy_multipliers} "
                 f"| Active Mistake Memories: {len(self.mistake_memory)} "
                 f"| Suspended Strategies: {[s for s, v in self._strategy_suspended.items() if v]}"
             )
         except Exception as e:
             logger.warning(f"Could not load persisted learning state (using defaults): {e}")
 
+    # ── Risk Normalization & Multi-Tenant Sizing ──────────────────────────
+
+    def _calculate_normalized_risk(self, trade_data: dict) -> dict:
+        """
+        Compute risk-normalized metrics (R-Multiple, Account Risk %, Sizing Sanity).
+        Prevents reckless gamblers (huge lots on micro accounts) from corrupting the learning model.
+        """
+        profit = float(trade_data.get("profit", 0.0))
+        swap = float(trade_data.get("swap", 0.0))
+        commission = float(trade_data.get("commission", 0.0))
+        net_pnl = profit + swap + commission
+
+        volume = float(trade_data.get("volume", 0.01) or 0.01)
+        entry_price = float(trade_data.get("entry_price", 0.0) or 0.0)
+        stop_loss = float(trade_data.get("stop_loss", 0.0) or 0.0)
+        balance = float(trade_data.get("balance", 0.0) or 1000.0)
+        balance = max(10.0, balance)
+
+        # Initial dollar risk calculation
+        # For XAUUSD: 1 lot = 100 oz. sl_distance * 100 * volume
+        if stop_loss > 0 and entry_price > 0 and abs(entry_price - stop_loss) > 0.01:
+            sl_distance = abs(entry_price - stop_loss)
+            initial_risk_dollars = max(1.0, sl_distance * 100.0 * volume)
+        else:
+            # Fallback based on default 2.0% risk if SL was not explicitly specified
+            initial_risk_dollars = max(1.0, balance * 0.02)
+
+        r_multiple = net_pnl / initial_risk_dollars
+        risk_pct = (initial_risk_dollars / balance) * 100.0
+        lot_to_balance_ratio = volume / (balance / 1000.0)  # Lots per $1k equity
+
+        # Classify recklessness tier
+        # Healthy benchmark: <= 0.03 lots / $1k balance (approx 1.5% - 2.5% risk)
+        if risk_pct > 8.0 or lot_to_balance_ratio > 0.15:
+            tier = "RECKLESS"
+            sanity_weight = 0.20  # Heavily discount strategy multiplier impact
+        elif risk_pct > 4.0 or lot_to_balance_ratio > 0.08:
+            tier = "AGGRESSIVE"
+            sanity_weight = 0.60
+        elif risk_pct > 2.0:
+            tier = "BALANCED"
+            sanity_weight = 1.00
+        else:
+            tier = "CONSERVATIVE"
+            sanity_weight = 1.00
+
+        return {
+            "net_pnl": net_pnl,
+            "initial_risk_dollars": initial_risk_dollars,
+            "r_multiple": r_multiple,
+            "risk_pct": risk_pct,
+            "lot_to_balance_ratio": lot_to_balance_ratio,
+            "recklessness_tier": tier,
+            "sanity_weight": sanity_weight,
+        }
+
     # ── Post-Trade Analysis & Adaptation ──────────────────────────────────
 
     def on_trade_closed(self, trade_data: dict, deal_info: Optional[dict] = None) -> dict:
         """
         Main learning trigger called immediately when an MT5 trade is closed.
-        Analyzes outcome, extracts mistake patterns, updates weights, and saves lessons.
+        Analyzes outcome with multi-tenant risk normalization, updates weights, and syncs across users.
         """
         ticket = trade_data.get("ticket", 0)
         profit = float(trade_data.get("profit", 0.0))
@@ -184,10 +250,16 @@ class TradeLearner:
         confluence = float(trade_data.get("confluence_score", 70.0))
         sentiment = float(trade_data.get("sentiment_score", 0.0))
 
-        # Determine outcome
-        if profit > 1.0:
+        # ── Calculate Multi-Tenant Risk Metrics ──────────────────────────
+        risk_metrics = self._calculate_normalized_risk(trade_data)
+        r_mult = risk_metrics["r_multiple"]
+        net_pnl = risk_metrics["net_pnl"]
+        sanity_wt = risk_metrics["sanity_weight"]
+
+        # Determine outcome using normalized R-Multiple & Net PnL
+        if r_mult >= 0.20 and net_pnl > 0.5:
             outcome = "WIN"
-        elif profit < -1.0:
+        elif r_mult <= -0.20 and net_pnl < -0.5:
             outcome = "LOSS"
         else:
             outcome = "SCRATCH"
@@ -196,21 +268,28 @@ class TradeLearner:
         if strategy in self._rolling_outcomes:
             self._rolling_outcomes[strategy].append(outcome)
 
-        # ── 1. Adapt Strategy Multipliers ────────────────────────────────
+        # ── 1. Adapt Strategy Multipliers (Sizing Sanity Scaled) ─────────
         current_strat_mult = self.strategy_multipliers.get(strategy, 1.0)
         if outcome == "WIN":
-            # Reward successful strategy — slow recovery (earned, not given)
-            new_strat_mult = min(1.60, current_strat_mult * 1.03)
+            # Reward successful strategy — scale gain by R-multiple and sanity
+            r_cap = min(2.5, max(0.5, r_mult))
+            gain = 0.03 * sanity_wt * (r_cap / 1.0)
+            new_strat_mult = min(1.60, current_strat_mult * (1.0 + gain))
             lesson_cat = "WINNING_EXECUTION"
-            summary = f"Successful {strategy.upper()} {order_type} execution in {regime} market. Captured +${profit:.2f} profit."
+            summary = (
+                f"Successful {strategy.upper()} {order_type} execution in {regime} market. "
+                f"Captured +{r_mult:.2f}R (+${net_pnl:.2f}) [Sanity: {risk_metrics['recklessness_tier']}]."
+            )
             defensive_rule = f"Maintain conviction on {strategy.upper()} when {regime} confluence exceeds {confluence:.0f}."
             sig = {}
             # Reset consecutive loss counter on win
             self._consecutive_losses[strategy] = 0
             self._cooldown_until[strategy] = None
         elif outcome == "LOSS":
-            # Penalize and diagnose mistake — FAST decay
-            new_strat_mult = max(0.30, current_strat_mult * 0.78)
+            # Penalize and diagnose mistake — scale penalty by sanity weight
+            # Reckless user overleveraging inflicts only minor penalty on the underlying strategy edge
+            loss_decay = 0.22 * sanity_wt
+            new_strat_mult = max(0.30, current_strat_mult * (1.0 - loss_decay))
             lesson_cat, summary, defensive_rule, sig = self._diagnose_mistake(
                 trade_data=trade_data,
                 deal_info=deal_info,
@@ -218,12 +297,15 @@ class TradeLearner:
                 confluence=confluence,
                 sentiment=sentiment,
                 profit=profit,
+                risk_metrics=risk_metrics,
             )
             # Add to rolling active mistake memory
             sig["strategy"] = strategy
             sig["order_type"] = order_type
             sig["regime"] = regime
             sig["regime_family"] = _regime_family(regime)
+            sig["r_multiple"] = round(r_mult, 2)
+            sig["recklessness_tier"] = risk_metrics["recklessness_tier"]
             sig["timestamp"] = datetime.now(timezone.utc).isoformat()
             self.mistake_memory.append(sig)
             if len(self.mistake_memory) > 40:
@@ -243,7 +325,7 @@ class TradeLearner:
         else:
             new_strat_mult = current_strat_mult
             lesson_cat = "BREAKEVEN_EXIT"
-            summary = f"Trade #{ticket} exited near breakeven (${profit:+.2f}). Capital protected."
+            summary = f"Trade #{ticket} exited near breakeven ({r_mult:+.2f}R, ${net_pnl:+.2f}). Capital protected."
             defensive_rule = "Continue strict trailing stop and breakeven protection."
             sig = {}
 
@@ -263,7 +345,7 @@ class TradeLearner:
                 symbol="XAUUSD",
                 order_type=order_type,
                 strategy=strategy,
-                profit=profit,
+                profit=net_pnl,
                 outcome=outcome,
                 mistake_category=lesson_cat,
                 lesson_summary=summary,
@@ -277,7 +359,7 @@ class TradeLearner:
                 weight=self.strategy_multipliers[strategy],
                 multiplier=self.strategy_multipliers[strategy],
                 win=(outcome == "WIN"),
-                pnl=profit,
+                pnl=net_pnl,
             )
 
             for comp, w in self.component_weights.items():
@@ -286,22 +368,51 @@ class TradeLearner:
                     weight=w,
                     multiplier=1.0,
                     win=(outcome == "WIN"),
-                    pnl=profit,
+                    pnl=net_pnl,
                 )
 
         except Exception as e:
             logger.error(f"Failed to persist trade lesson #{ticket}: {e}")
 
+        # 5. Broadcast to Federated Learning Network
+        try:
+            telemetry = self.federated_sync.build_telemetry_payload(
+                ticket=ticket,
+                strategy=strategy,
+                order_type=order_type,
+                profit=net_pnl,
+                outcome=outcome,
+                mistake_category=lesson_cat,
+                lesson_summary=summary,
+                defensive_rule=defensive_rule,
+                mistake_signature=sig,
+                r_multiple=r_mult,
+                risk_pct=risk_metrics["risk_pct"],
+                lot_to_balance_ratio=risk_metrics["lot_to_balance_ratio"],
+                recklessness_tier=risk_metrics["recklessness_tier"],
+                sanity_weight=sanity_wt,
+                confluence_score=confluence,
+                sentiment_score=sentiment,
+                regime=regime,
+                user_mode=str(trade_data.get("user_mode") or self.settings.active_mode),
+            )
+            self.federated_sync.push_lesson(telemetry)
+        except Exception as e:
+            logger.debug(f"Federated learning broadcast note: {e}")
+
         logger.info(
-            f"🎓 Learned from Trade #{ticket} | Outcome: {outcome} (${profit:+.2f}) | "
-            f"Category: {lesson_cat} | New {strategy} Multiplier: {self.strategy_multipliers[strategy]:.2f}x | "
-            f"Streak: {self._consecutive_losses.get(strategy, 0)} consecutive losses"
+            f"🎓 Learned from Trade #{ticket} | Outcome: {outcome} ({r_mult:+.2f}R, ${net_pnl:+.2f}) | "
+            f"Tier: {risk_metrics['recklessness_tier']} (Sanity: {sanity_wt:.2f}) | "
+            f"Category: {lesson_cat} | New {strategy} Multiplier: {self.strategy_multipliers[strategy]:.2f}x"
         )
 
         return {
             "ticket": ticket,
             "outcome": outcome,
-            "profit": profit,
+            "profit": net_pnl,
+            "r_multiple": r_mult,
+            "recklessness_tier": risk_metrics["recklessness_tier"],
+            "sanity_weight": sanity_wt,
             "category": lesson_cat,
             "summary": summary,
             "defensive_rule": defensive_rule,
@@ -318,6 +429,7 @@ class TradeLearner:
         confluence: float,
         sentiment: float,
         profit: float,
+        risk_metrics: Optional[dict] = None,
     ) -> tuple[str, str, str, dict]:
         """Classify why the trade lost and generate defensive learning takeaway."""
         order_type = trade_data.get("direction") or trade_data.get("order_type") or "BUY"
@@ -329,6 +441,33 @@ class TradeLearner:
             "direction": order_type,
             "confluence_range": "< 75" if confluence < 75 else ">= 75",
         }
+
+        # Category 0a: Excessive Leverage / Oversized Lot Blowout
+        if risk_metrics:
+            reckless_tier = risk_metrics.get("recklessness_tier", "NORMAL")
+            risk_pct = risk_metrics.get("risk_pct", 0.0)
+            vol = trade_data.get("volume", 0.01)
+            bal = trade_data.get("balance", 1000.0)
+            if reckless_tier == "RECKLESS" or risk_pct > 8.0:
+                cat = "OVERSIZED_LOT_BLOWOUT"
+                summary = (
+                    f"Outsized capital loss ({risk_pct:.1f}% equity risk) due to excessive position size "
+                    f"({vol} lots on ${bal:.0f} balance). Execution sizing was primary failure cause."
+                )
+                rule = "Cap maximum lot size to <= 0.02 lots per $1,000 balance and enforce strict 2% max risk."
+                sig["trap_type"] = "oversized_lot"
+                return cat, summary, rule, sig
+
+            r_mult = risk_metrics.get("r_multiple", 0.0)
+            if r_mult < -1.4:
+                cat = "SLIPPAGE_SPREAD_EXPANSION"
+                summary = (
+                    f"Trade loss exceeded planned stop distance ({r_mult:.2f}R). "
+                    f"Significant spread blowout or slippage occurred at exit."
+                )
+                rule = "Verify broker spread conditions and avoid trading through rollover or high-impact news."
+                sig["trap_type"] = "spread_slippage"
+                return cat, summary, rule, sig
 
         # Category 1: Counter-Regime Trap
         if ("BULL" in regime and order_type == "SELL") or ("BEAR" in regime and order_type == "BUY"):
@@ -599,6 +738,55 @@ class TradeLearner:
         """Get consecutive loss count for a strategy."""
         return self._consecutive_losses.get(strategy_name.lower(), 0)
 
+    def sync_federated_state(self) -> dict:
+        """
+        Synchronize with collective multi-tenant learning network (cloud hub or local peer pool).
+        Blends global strategy multipliers and absorbs network mistake memories.
+        """
+        try:
+            global_state = self.federated_sync.fetch_global_state()
+            if not global_state:
+                return {"status": "no_data"}
+
+            global_mults = global_state.get("strategy_multipliers", {})
+            if global_mults:
+                self.strategy_multipliers = self.federated_sync.blend_multipliers(
+                    self.strategy_multipliers,
+                    global_mults,
+                )
+
+            # Merge global mistake memories into local memory guard
+            global_mistakes = global_state.get("global_mistakes", [])
+            existing_signatures = {
+                f"{m.get('strategy')}_{m.get('direction')}_{m.get('regime')}_{m.get('trap_type')}"
+                for m in self.mistake_memory
+            }
+            added_count = 0
+            for gm in global_mistakes:
+                key = f"{gm.get('strategy')}_{gm.get('direction')}_{gm.get('regime')}_{gm.get('trap_type', gm.get('category'))}"
+                if key not in existing_signatures:
+                    self.mistake_memory.append(gm)
+                    existing_signatures.add(key)
+                    added_count += 1
+
+            if len(self.mistake_memory) > 50:
+                self.mistake_memory = self.mistake_memory[-50:]
+
+            logger.info(
+                f"🌐 Federated Sync Complete | Blended Multipliers: {self.strategy_multipliers} "
+                f"| Absorbed {added_count} new global mistake signatures"
+            )
+            return {
+                "status": "success",
+                "blended_multipliers": dict(self.strategy_multipliers),
+                "new_mistakes_absorbed": added_count,
+                "total_mistakes_memorized": len(self.mistake_memory),
+                "total_network_lessons": global_state.get("total_lessons", 0),
+            }
+        except Exception as e:
+            logger.warning(f"Federated sync failed: {e}")
+            return {"status": "error", "error": str(e)}
+
     def get_learning_metrics(self) -> dict:
         """Expose self-learning metrics for Web Dashboard and Telegram."""
         recent = crud.get_recent_lessons(limit=5)
@@ -622,6 +810,12 @@ class TradeLearner:
             "cooldowns_active": {
                 s: self._cooldown_until[s].isoformat() if self._cooldown_until.get(s) else None
                 for s in self._cooldown_until
+            },
+            "federated_sync": {
+                "enabled": self.federated_sync.enabled,
+                "client_id": self.federated_sync.client_id,
+                "sync_url": self.federated_sync.sync_url or "local_peer_pool",
+                "blend_ratio": self.federated_sync.global_blend_ratio,
             },
             "recent_lessons": [
                 {

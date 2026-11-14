@@ -124,6 +124,23 @@ class DatabaseSettings(BaseSettings):
     model_config = _COMMON_CONFIG
 
 
+class FederatedSyncSettings(BaseSettings):
+    """Federated learning & multi-tenant cross-user sync settings."""
+
+    enabled: bool = Field(default=True, alias="FEDERATED_SYNC_ENABLED")
+    sync_url: str = Field(default="", alias="FEDERATED_SYNC_URL")
+    api_key: str = Field(default="", alias="FEDERATED_SYNC_KEY")
+    sync_interval_minutes: int = Field(default=30, alias="FEDERATED_SYNC_INTERVAL")
+    global_blend_ratio: float = Field(default=0.70, alias="FEDERATED_GLOBAL_BLEND_RATIO")  # 70% global, 30% local
+    client_id: str = Field(default="", alias="FEDERATED_CLIENT_ID")
+    pool_file: str = Field(
+        default=str(DATA_DIR / "federated_sync_pool.json"),
+        alias="FEDERATED_POOL_FILE",
+    )
+
+    model_config = _COMMON_CONFIG
+
+
 class Settings(BaseSettings):
     """Master settings — aggregates all sub-settings."""
 
@@ -134,6 +151,7 @@ class Settings(BaseSettings):
     telegram: TelegramSettings = TelegramSettings()
     dashboard: DashboardSettings = DashboardSettings()
     database: DatabaseSettings = DatabaseSettings()
+    federated_sync: FederatedSyncSettings = FederatedSyncSettings()
 
     # Trading parameters (loaded from YAML)
     trading_params: dict[str, Any] = Field(default_factory=load_trading_params)

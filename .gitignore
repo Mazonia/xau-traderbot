@@ -42,9 +42,10 @@ data/*
 *~
 .playwright-mcp/
 
-# OS
+# OS & Local Shortcuts
 Thumbs.db
 .DS_Store
+Toggle MT5.bat
 
 # Logs
 logs/

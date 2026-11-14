@@ -15,6 +15,7 @@ from typing import Optional
 from loguru import logger
 
 from core.mt5_connector import MT5Connector
+from config.settings import get_settings
 from database import crud
 from execution.risk_manager import RiskManager
 from strategies.base_strategy import TradingSignal, SignalDirection
@@ -265,14 +266,23 @@ class TradeExecutor:
                 else:
                     resolved_strat = "scalping"
 
+                account_info = self.mt5.get_account_info() or {}
                 trade_learner.on_trade_closed({
                     "ticket": ticket,
                     "strategy": resolved_strat,
                     "direction": position.get("type", "BUY"),
                     "profit": profit,
+                    "volume": position.get("volume", getattr(trade_obj, "volume", 0.01) if trade_obj else 0.01),
+                    "entry_price": position.get("open_price", getattr(trade_obj, "entry_price", 0.0) if trade_obj else 0.0),
+                    "exit_price": exit_price,
+                    "stop_loss": position.get("sl", getattr(trade_obj, "stop_loss", 0.0) if trade_obj else 0.0),
+                    "take_profit": position.get("tp", getattr(trade_obj, "take_profit", 0.0) if trade_obj else 0.0),
+                    "balance": float(account_info.get("balance", 1000.0)),
+                    "equity": float(account_info.get("equity", 1000.0)),
                     "regime": getattr(trade_obj, "regime", "RANGING") if trade_obj else "RANGING",
                     "confluence_score": getattr(trade_obj, "confluence_score", 75.0) if trade_obj else 75.0,
                     "sentiment_score": getattr(trade_obj, "sentiment_score", 0.0) if trade_obj else 0.0,
+                    "user_mode": get_settings().active_mode,
                 })
             except Exception as e:
                 logger.warning(f"TradeLearner hook warning for #{ticket}: {e}")
@@ -335,20 +345,27 @@ class TradeExecutor:
                         commission=commission,
                         closed_at=closed_at,
                     )
+                    account_info = self.mt5.get_account_info() or {}
                     closed_events.append({
                         "ticket": trade.ticket,
                         "symbol": getattr(trade, "symbol", "XAUUSD"),
                         "strategy": getattr(trade, "strategy", "scalping"),
                         "direction": trade.order_type,
+                        "volume": getattr(trade, "volume", 0.01),
                         "entry_price": trade.entry_price,
                         "exit_price": exit_price,
+                        "stop_loss": getattr(trade, "stop_loss", 0.0),
+                        "take_profit": getattr(trade, "take_profit", 0.0),
                         "profit": profit,
                         "swap": swap,
                         "commission": commission,
+                        "balance": float(account_info.get("balance", 1000.0)),
+                        "equity": float(account_info.get("equity", 1000.0)),
                         "reason": reason,
                         "regime": getattr(trade, "regime", "RANGING"),
                         "confluence_score": getattr(trade, "confluence_score", 70.0),
                         "sentiment_score": getattr(trade, "sentiment_score", 0.0),
+                        "user_mode": get_settings().active_mode,
                     })
                 except Exception as e:
                     logger.error(f"Failed to process externally closed position #{trade.ticket}: {e}")
